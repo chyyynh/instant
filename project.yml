@@ -1,0 +1,51 @@
+# Generate Instant.xcodeproj with:  xcodegen generate
+name: Instant
+options:
+  bundleIdPrefix: io.github.chyyynh
+  deploymentTarget:
+    macOS: "26.0"
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+packages:
+  InstantCore:
+    path: Packages/InstantCore
+
+targets:
+  Instant:
+    type: application
+    platform: auto
+    supportedDestinations: [macOS, iOS]
+    sources: [App]
+    dependencies:
+      - package: InstantCore
+        product: InstantCore
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Instant
+        LSApplicationCategoryType: public.app-category.productivity
+        NSMicrophoneUsageDescription: Instant 需要麥克風來聽身邊的人說話並即時翻譯。
+        NSSpeechRecognitionUsageDescription: Instant 在裝置上辨識語音，以便即時翻譯。
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        PRODUCT_NAME: Instant
+        # One multiplatform target: native macOS and iOS (not Catalyst / "Designed for iPad").
+        SUPPORTED_PLATFORMS: "macosx iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.chyyynh.instant
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "6.0"
+        # Personal Team (free Apple ID). Apple Development signing keeps the signature stable,
+        # so macOS remembers microphone / screen-recording permission across builds.
+        DEVELOPMENT_TEAM: W8Y5566YVP
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: YES

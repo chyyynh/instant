@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+Samples/*.mp3
+.swiftpm/
+Packages/InstantCore/.swiftpm/
+xcuserdata/
