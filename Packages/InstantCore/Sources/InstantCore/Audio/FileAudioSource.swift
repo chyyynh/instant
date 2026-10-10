@@ -10,6 +10,8 @@ public final class FileAudioSource: AudioSource {
     private var task: Task<Void, Never>?
 
     /// - Parameter startTime: Seconds into the file to start from (e.g. to skip a podcast intro).
+    public var name: String { url.lastPathComponent }
+
     public init(url: URL, startTime: TimeInterval = 0, chunkDuration: Duration = .milliseconds(100)) {
         self.url = url
         self.startTime = startTime

@@ -35,6 +35,11 @@ enum DevAutomation {
     }
 
     private static func dumpTranscript(_ transcript: Transcript, to path: String) {
+        // Also into the trace, so `instant-lab report` has the on-screen lines even if the app is killed.
+        Trace.shared.event("ui.snapshot", [
+            "lines": transcript.lines.map { ["id": $0.id, "source": $0.source, "translation": $0.translation ?? "", "final": $0.isFinal] as [String: any Sendable] },
+            "tail": transcript.volatile,
+        ])
         var text = transcript.lines.map { "\($0.translation ?? "（翻譯中）")\n  \($0.source)" }.joined(separator: "\n")
         if !transcript.volatile.isEmpty {
             text += "\n≈ \(transcript.draftTranslation ?? "")\n  … \(transcript.volatile)"

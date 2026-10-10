@@ -5,6 +5,9 @@ public struct Line: Identifiable, Sendable, Equatable {
     public let id: Int
     public let source: String
     public var translation: String?
+    /// The draft translation this line had while it was still being spoken, shown until
+    /// `translation` arrives so a finished line never goes blank.
+    public var interimTranslation: String?
     /// False while the segment is still part of the recognizer's in-progress result and may be revised.
     public var isFinal: Bool
 }
@@ -24,6 +27,8 @@ public struct Transcript: Sendable, Equatable {
     public private(set) var volatile = ""
     /// Rough translation of (a recent snapshot of) `volatile`, when drafts are enabled.
     public private(set) var draftTranslation: String?
+    /// The in-progress text `draftTranslation` was made from.
+    private var draftSource = ""
 
     public var segmenter = Segmenter()
 
@@ -51,14 +56,14 @@ public struct Transcript: Sendable, Equatable {
             let (segments, tail) = segmenter.split(remainder, isFinal: false)
             replaceProvisional(with: settled + segments, isFinal: false)
             volatile = tail
-            if tail.isEmpty { draftTranslation = nil }
+            carryDraft()
         case .final(let tokens):
             let (segments, _) = segmenter.split(tokens, isFinal: true)
             replaceProvisional(with: segments, isFinal: true)
             finalCount = lines.count
             settled = []
             volatile = ""
-            draftTranslation = nil
+            carryDraft()
         }
     }
 
@@ -66,10 +71,10 @@ public struct Transcript: Sendable, Equatable {
     /// but the recognizer hasn't finalized yet. Locks all current provisional lines in place.
     public mutating func settleTail() {
         guard !volatile.isEmpty else { return }
-        lines.append(Line(id: lines.count, source: volatile, translation: translations[volatile], isFinal: false))
+        lines.append(Line(id: lines.count, source: volatile, translation: translations[volatile], interimTranslation: nil, isFinal: false))
         settled = lines.dropFirst(finalCount).map(\.source)
         volatile = ""
-        draftTranslation = nil
+        carryDraft()
     }
 
     /// The tokens after `prefix`, ignoring whitespace (segments are trimmed), or nil if they don't start with it.
@@ -110,10 +115,31 @@ public struct Transcript: Sendable, Equatable {
         inFlight.remove(source)
     }
 
-    /// Ignored if the in-progress text has since completed or been cleared.
-    public mutating func setDraftTranslation(_ translation: String) {
-        guard !volatile.isEmpty else { return }
+    /// Records a draft translation of `source`, a snapshot of the in-progress text. Ignored if that
+    /// text has since been completed or replaced.
+    public mutating func setDraftTranslation(_ translation: String, forSource source: String) {
+        guard !volatile.isEmpty, Self.continues(volatile, from: source) else { return }
         draftTranslation = translation
+        draftSource = source
+    }
+
+    /// When the in-progress text has moved on (completed into a line, or replaced), the draft no
+    /// longer describes it: hand it to the line it became, then drop it.
+    private mutating func carryDraft() {
+        guard let draft = draftTranslation else { return }
+        if !volatile.isEmpty, Self.continues(volatile, from: draftSource) { return }
+        if let index = lines.lastIndex(where: { Self.continues($0.source, from: draftSource) }),
+           lines[index].translation == nil {
+            lines[index].interimTranslation = draft
+        }
+        draftTranslation = nil
+        draftSource = ""
+    }
+
+    /// Whether `text` is (a revision or extension of) the speech `earlier` was taken from.
+    static func continues(_ text: String, from earlier: String) -> Bool {
+        let probe = earlier.prefix(min(4, earlier.count))
+        return !probe.isEmpty && text.hasPrefix(probe)
     }
 
     /// Up to `limit` translated lines immediately before `id`, oldest first.
@@ -129,8 +155,11 @@ public struct Transcript: Sendable, Equatable {
     }
 
     private mutating func replaceProvisional(with segments: [String], isFinal: Bool) {
+        let previous = lines.dropFirst(finalCount)
         lines = Array(lines.prefix(finalCount)) + segments.enumerated().map { offset, segment in
-            Line(id: finalCount + offset, source: segment, translation: translations[segment], isFinal: isFinal)
+            let interim = previous.first { Self.continues(segment, from: $0.source) || Self.continues($0.source, from: segment) }?.interimTranslation
+            return Line(id: finalCount + offset, source: segment, translation: translations[segment],
+                        interimTranslation: interim, isFinal: isFinal)
         }
     }
 

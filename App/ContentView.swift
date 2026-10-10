@@ -4,17 +4,23 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var session = LiveSession()
+    @AppStorage("captionSize") private var captionSize: CaptionSize = .medium
 
     var body: some View {
         NavigationStack {
-            TranscriptView(transcript: session.transcript, isListening: session.status == .running)
+            TranscriptView(transcript: session.transcript, isListening: session.status == .running, size: captionSize)
                 .navigationTitle(LanguagePickers.title(for: session))
                 .toolbarTitleMenu { LanguagePickers(session: session) }
                 #if os(macOS)
                 .navigationSubtitle(statusText)
                 #endif
                 .toolbar { toolbar }
-                .safeAreaInset(edge: .bottom) { failureBanner }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        failureBanner
+                        StatusBar(session: session)
+                    }
+                }
         }
         // The system's download consent sheet must be presented from a view.
         .translationTask(session.translationDownload) { translation in
@@ -36,6 +42,16 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .disabled(session.status.isActive)
+            }
+        }
+        ToolbarItem {
+            Menu("字級", systemImage: "textformat.size") {
+                Picker("字級", selection: $captionSize) {
+                    ForEach(CaptionSize.allCases) { size in
+                        Text(size.title).tag(size)
+                    }
+                }
+                .pickerStyle(.inline)
             }
         }
         ToolbarItem {

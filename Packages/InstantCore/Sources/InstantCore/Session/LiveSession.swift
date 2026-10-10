@@ -42,6 +42,8 @@ public final class LiveSession {
     public var sourceLocale: Locale
     public var targetLanguage: Locale.Language
     public var input: Input = .microphone
+    /// What the running session is listening to, for display ("麥克風", "Mac 聲音", a file name).
+    public private(set) var sourceDescription = ""
 
     /// Non-nil while the translation pair needs downloading. The UI attaches
     /// `.translationTask(_:)` with it (the system consent sheet needs a view), calls
@@ -50,10 +52,10 @@ public final class LiveSession {
 
     /// How many earlier lines are passed to context-aware translators.
     public var contextLimit = 6
-    /// Also translate the segment still being spoken, re-translating as it grows, so Chinese
-    /// follows the Japanese live instead of waiting for the segment to end. Cheap with the
-    /// on-device Apple translator (~50ms, free); a future LLM translator should only do lines.
-    public var draftTranslationsEnabled = true
+    /// Also translate the segment still being spoken, re-translating as it grows. Off: a line is
+    /// translated once it's segmented (~70ms with `.lowLatency`), so captions appear complete and
+    /// never change under the reader, and half a Japanese sentence often translates misleadingly.
+    public var draftTranslationsEnabled = false
     /// Minimum spacing between draft translations of in-progress speech.
     public var draftInterval: Duration = .milliseconds(500)
     /// With no new recognition for this long, the in-progress segment is treated as complete.
@@ -70,6 +72,10 @@ public final class LiveSession {
     private var draftTask: Task<Void, Never>?
     private var settleTask: Task<Void, Never>?
     private var stableTimers: [String: Task<Void, Never>] = [:]
+    private var stallProbe: Task<Void, Never>?
+    /// Keeps macOS from App-Napping us while the user watches another app: in the background,
+    /// translation round-trips went from ~70ms to ~1.3s without it.
+    private var activity: NSObjectProtocol?
     private var downloadContinuation: CheckedContinuation<Void, Never>?
 
     public init(sourceLocale: Locale = Locale(identifier: "ja-JP"),
@@ -95,6 +101,7 @@ public final class LiveSession {
             status = .preparing("開啟音訊…")
             let source = override ?? makeAudioSource()
             audioSource = source
+            sourceDescription = (source as? FileAudioSource)?.name ?? (input == .microphone ? "麥克風" : "Mac 聲音")
             let chunks = try await source.start()
 
             status = .preparing("準備語音辨識…")
@@ -103,6 +110,10 @@ public final class LiveSession {
             let events = try await transcriber.start(audio: chunks)
 
             status = .running
+            activity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .latencyCritical, .idleSystemSleepDisabled],
+                reason: "Live captions and translation")
+            stallProbe = Task { await Self.probeMainThreadStalls() }
             eventsTask = Task { [weak self] in
                 do {
                     for try await event in events { self?.handle(event) }
@@ -123,6 +134,9 @@ public final class LiveSession {
         await transcriber?.stop()
         await eventsTask?.value
     }
+
+    /// Input level 0…1 for a meter; 0 when not listening.
+    public var audioLevel: Float { transcriber?.level.value ?? 0 }
 
     public func clear() {
         guard !status.isActive else { return }
@@ -207,6 +221,26 @@ public final class LiveSession {
         }
     }
 
+    /// Every 100ms, checks how late the main actor gets to run. Everything the UI shows (and every
+    /// translation result) goes through it, so stalls here look like slow translation.
+    private static func probeMainThreadStalls() async {
+        let interval = 0.1
+        var worst = 0.0
+        var lastReport = Trace.shared.elapsed
+        while !Task.isCancelled {
+            let before = Trace.shared.elapsed
+            try? await Task.sleep(for: .milliseconds(100))
+            let late = Trace.shared.elapsed - before - interval
+            worst = max(worst, late)
+            if late > 0.25 { Trace.shared.event("main.stall", ["ms": Int(late * 1000)]) }
+            if Trace.shared.elapsed - lastReport >= 5 {
+                Trace.shared.event("main.load", ["worst_ms": Int(worst * 1000)])
+                worst = 0
+                lastReport = Trace.shared.elapsed
+            }
+        }
+    }
+
     /// Records which lines appeared, changed or disappeared, and the remaining in-progress text.
     private func traceSegmentation(before: [Line], cause: String) {
         let after = transcript.lines
@@ -235,7 +269,7 @@ public final class LiveSession {
                 let context = transcript.lines.last.map { transcript.context(before: $0.id + 1, limit: contextLimit) } ?? []
                 let requested = Trace.shared.elapsed
                 if let draft = try? await translator.translate(snapshot, context: context) {
-                    transcript.setDraftTranslation(draft)
+                    transcript.setDraftTranslation(draft, forSource: snapshot)
                     Trace.shared.event("mt.draft", [
                         "source": snapshot,
                         "translation": draft,
@@ -269,6 +303,10 @@ public final class LiveSession {
         settleTask = nil
         stableTimers.values.forEach { $0.cancel() }
         stableTimers = [:]
+        stallProbe?.cancel()
+        stallProbe = nil
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
+        activity = nil
         await transcriber?.cancel()
         transcriber = nil
         eventsTask = nil

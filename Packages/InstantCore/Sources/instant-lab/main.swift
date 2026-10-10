@@ -118,6 +118,7 @@ func report(_ path: String) {
     mt time                  \(stats(responses.compactMap { ($0["ms"] as? Int).map { Double($0) / 1000 } }))
     draft translations       \(drafts.count) (\(drafts.filter { $0["stale"] as? Bool == true }.count) stale), \(stats(drafts.compactMap { ($0["ms"] as? Int).map { Double($0) / 1000 } }))
     chinese for live text    \(stats(zip(drafts.dropFirst(), drafts).map { t($0) - t($1) })) between draft updates
+    main-thread stalls       \(stage("main.stall").count) over 250ms, worst \(stage("main.load").compactMap { $0["worst_ms"] as? Int }.max().map { "\($0)ms" } ?? "—")
     errors                   \(events.filter { ($0["stage"] as? String)?.hasSuffix(".error") == true }.count)
     ───────────────────────────────────────────────────────
     """)

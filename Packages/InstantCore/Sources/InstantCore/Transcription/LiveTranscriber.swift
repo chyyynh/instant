@@ -15,6 +15,8 @@ public final class LiveTranscriber {
     private var analyzer: SpeechAnalyzer?
     private var feedTask: Task<Void, Never>?
     private var resultsTask: Task<Void, Never>?
+    /// Recent input level, for a UI meter.
+    public let level = LevelMeter()
 
     public init(locale: Locale) {
         self.locale = locale
@@ -50,6 +52,7 @@ public final class LiveTranscriber {
         try await analyzer.start(inputSequence: inputs)
 
         let fed = AudioClock()
+        let level = level
         Trace.shared.event("asr.start", ["locale": supported.identifier(.bcp47), "format": "\(analyzerFormat.sampleRate)Hz/\(analyzerFormat.channelCount)ch"])
         feedTask = Task.detached(priority: .userInitiated) {
             let converter = BufferConverter(outputFormat: analyzerFormat)
@@ -58,7 +61,9 @@ public final class LiveTranscriber {
             for await chunk in audio {
                 if let buffer = converter.convert(chunk.buffer) {
                     inputContinuation.yield(AnalyzerInput(buffer: buffer))
-                    peak = max(peak, buffer.peakLevel)
+                    let bufferPeak = buffer.peakLevel
+                    peak = max(peak, bufferPeak)
+                    level.update(bufferPeak)
                     let total = fed.add(Double(buffer.frameLength) / analyzerFormat.sampleRate)
                     if total >= nextReport {
                         // Peak level over the last second in dBFS: near -100 means silence.
@@ -210,5 +215,26 @@ extension AVAudioPCMBuffer {
             }
         }
         return peak
+    }
+}
+
+/// Latest input peak (0…1) with a short decay, safe to read from any thread.
+public final class LevelMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var peak: Float = 0
+    private var updated = Date.distantPast
+
+    public init() {}
+
+    func update(_ value: Float) {
+        lock.withLock {
+            peak = max(value, peak * 0.6)
+            updated = .now
+        }
+    }
+
+    /// Peak level, falling to 0 if no audio has arrived for half a second.
+    public var value: Float {
+        lock.withLock { Date.now.timeIntervalSince(updated) < 0.5 ? peak : 0 }
     }
 }
