@@ -26,7 +26,9 @@ public final class MicrophoneSource: AudioSource {
 
         let (stream, continuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .bufferingNewest(64))
         self.continuation = continuation
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+        // @Sendable: the tap runs on AVAudioEngine's realtime queue. Without it the closure would
+        // inherit this class's main-actor isolation and trap on that queue's isolation check.
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, _ in
             continuation.yield(AudioChunk(buffer))
         }
         engine.prepare()
