@@ -7,14 +7,17 @@ public final class FileAudioSource: AudioSource {
     private let url: URL
     private let startTime: TimeInterval
     private let chunkDuration: Duration
+    private let speed: Double
     private var task: Task<Void, Never>?
 
     /// - Parameter startTime: Seconds into the file to start from (e.g. to skip a podcast intro).
     public var name: String { url.lastPathComponent }
 
-    public init(url: URL, startTime: TimeInterval = 0, chunkDuration: Duration = .milliseconds(100)) {
+    /// - Parameter speed: Playback rate; >1 compresses long-session tests (e.g. 20 min at 4×).
+    public init(url: URL, startTime: TimeInterval = 0, speed: Double = 1, chunkDuration: Duration = .milliseconds(100)) {
         self.url = url
         self.startTime = startTime
+        self.speed = speed
         self.chunkDuration = chunkDuration
     }
 
@@ -24,7 +27,7 @@ public final class FileAudioSource: AudioSource {
         file.framePosition = min(AVAudioFramePosition(startTime * format.sampleRate), file.length)
         let seconds = Double(chunkDuration.components.attoseconds) / 1e18 + Double(chunkDuration.components.seconds)
         let frames = AVAudioFrameCount(format.sampleRate * seconds)
-        let chunkDuration = chunkDuration
+        let pause = chunkDuration / speed
         let (stream, continuation) = AsyncStream<AudioChunk>.makeStream()
         let unsafeFile = file
         task = Task.detached {
@@ -33,7 +36,7 @@ public final class FileAudioSource: AudioSource {
                       (try? unsafeFile.read(into: buffer, frameCount: frames)) != nil
                 else { break }
                 continuation.yield(AudioChunk(buffer))
-                try? await Task.sleep(for: chunkDuration)
+                try? await Task.sleep(for: pause)
             }
             continuation.finish()
         }

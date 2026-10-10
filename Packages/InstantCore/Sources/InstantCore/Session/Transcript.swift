@@ -5,9 +5,6 @@ public struct Line: Identifiable, Sendable, Equatable {
     public let id: Int
     public let source: String
     public var translation: String?
-    /// The draft translation this line had while it was still being spoken, shown until
-    /// `translation` arrives so a finished line never goes blank.
-    public var interimTranslation: String?
     /// False while the segment is still part of the recognizer's in-progress result and may be revised.
     public var isFinal: Bool
 }
@@ -16,63 +13,174 @@ public struct Line: Identifiable, Sendable, Equatable {
 ///
 /// Apple's recognizer can go 10+ seconds between final results, so segments that are already
 /// complete inside the volatile result (ended by punctuation or a pause, see `Segmenter`) are
-/// surfaced as provisional lines right away. Translations are cached by segment text, so a
+/// surfaced as provisional lines right away. A line is shown as a caption once translated and
+/// is then locked: later results never change it. Translations are cached by segment text, so a
 /// provisional line that survives into the final isn't translated twice.
 ///
+/// Every update touches only the lines that can still change (from `mutableStart` on), so the
+/// cost per recognizer event doesn't grow with the length of the session.
+///
 /// Pure state so the event handling can be tested without audio or models.
-public struct Transcript: Sendable, Equatable {
-    /// Final lines followed by provisional lines.
+public struct Transcript: Sendable {
+    /// Captions (`lines[..<shownCount]`), then lines waiting for translation, then provisional lines.
     public private(set) var lines: [Line] = []
     /// The segment still being spoken.
     public private(set) var volatile = ""
     /// Rough translation of (a recent snapshot of) `volatile`, when drafts are enabled.
     public private(set) var draftTranslation: String?
-    /// The in-progress text `draftTranslation` was made from.
-    private var draftSource = ""
+    /// How many leading lines are captions: translated, in order, never changing again.
+    public private(set) var shownCount = 0
 
     public var segmenter = Segmenter()
 
+    /// Lines before this are final (from earlier recognizer results).
     private var finalCount = 0
-    /// Provisional lines that must not change any more, since the last final: lines already shown
-    /// (translated) and lines settled after a pause. Later recognizer results — revisions, and the
-    /// final with its own segmentation — only affect the text after them, so captions on screen
-    /// never get rewritten.
+    /// Lines of the current recognizer result that must not change any more: shown captions and
+    /// lines settled after a pause. Later results — revisions, and the final with its own
+    /// segmentation — only affect the text after them.
     private var locked: [String] = []
+    private var draftSource = ""
     private var translations: [String: String] = [:]
     private var inFlight: Set<String> = []
 
     public init() {}
 
-    /// Applies a recognizer event.
+    /// Index of the first line that can still change in any way.
+    public var mutableStart: Int { min(finalCount, shownCount) }
+
+    public var shownLines: ArraySlice<Line> { lines[..<shownCount] }
+
+    /// Recognized text not yet shown as a caption: lines awaiting translation plus the segment
+    /// still being spoken.
+    public var pendingText: String {
+        (lines[shownCount...].map(\.source) + [volatile]).joined()
+    }
+
+    /// Lines with no translation and none in flight.
+    public var untranslated: [Line] {
+        lines[shownCount...].filter { $0.translation == nil && !inFlight.contains($0.source) }
+    }
+
+    public func line(_ id: Line.ID) -> Line? {
+        lines.indices.contains(id) ? lines[id] : nil
+    }
+
+    // MARK: - Recognizer events
+
     public mutating func apply(_ event: TranscriptEvent) {
         switch event {
         case .volatile(let tokens):
             let (segments, tail) = segmenter.split(unlocked(tokens), isFinal: false)
-            replaceProvisional(with: locked + segments, isFinal: false)
+            replaceCurrentResult(with: locked + segments, isFinal: false)
             volatile = tail
-            carryDraft()
         case .final(let tokens):
             let (segments, _) = segmenter.split(unlocked(tokens), isFinal: true)
-            replaceProvisional(with: locked + segments, isFinal: true)
+            replaceCurrentResult(with: locked + segments, isFinal: true)
             finalCount = lines.count
             locked = []
             volatile = ""
-            carryDraft()
         }
+        dropStaleDraft()
     }
 
     /// Treats the in-progress segment as complete, e.g. after the speaker has been silent a while
-    /// but the recognizer hasn't finalized yet. Locks all current provisional lines in place.
+    /// but the recognizer hasn't finalized yet. Locks all lines of the current result.
     public mutating func settleTail() {
         guard !volatile.isEmpty else { return }
-        lines.append(Line(id: lines.count, source: volatile, translation: translations[volatile], interimTranslation: nil, isFinal: false))
-        locked = lines.dropFirst(finalCount).map(\.source)
+        lines.append(Line(id: lines.count, source: volatile, translation: translations[volatile], isFinal: false))
+        locked = lines[finalCount...].map(\.source)
         volatile = ""
-        carryDraft()
+        dropStaleDraft()
+        advanceShown()
     }
 
-    /// The tokens after the locked lines. If the recognizer revised locked text, the locked lines
-    /// still stand and the same number of characters is skipped, so the revision is never shown.
+    // MARK: - Translation
+
+    public mutating func beginTranslation(forSource source: String) {
+        inFlight.insert(source)
+    }
+
+    public mutating func setTranslation(_ translation: String, forSource source: String) {
+        inFlight.remove(source)
+        translations[source] = translation
+        var lastMatch: Int?
+        for index in lines.indices.dropFirst(shownCount) where lines[index].source == source {
+            lines[index].translation = translation
+            lastMatch = index
+        }
+        // A line about to be shown gets locked, along with everything before it in this result.
+        if let index = lastMatch, index >= finalCount, index - finalCount + 1 > locked.count {
+            locked = lines[finalCount...index].map(\.source)
+        }
+        advanceShown()
+    }
+
+    /// Lets a failed line be requested again on the next event.
+    public mutating func translationFailed(forSource source: String) {
+        inFlight.remove(source)
+    }
+
+    /// Records a draft translation of `source`, a snapshot of the in-progress text. Ignored if that
+    /// text has since been completed or replaced.
+    public mutating func setDraftTranslation(_ translation: String, forSource source: String) {
+        guard !volatile.isEmpty, Self.continues(volatile, from: source) else { return }
+        draftTranslation = translation
+        draftSource = source
+    }
+
+    /// Up to `limit` translated lines immediately before `id`, oldest first.
+    public func context(before id: Line.ID, limit: Int) -> [TranslatedLine] {
+        var result: [TranslatedLine] = []
+        var index = min(id, lines.count) - 1
+        while index >= 0, result.count < limit {
+            if let translation = lines[index].translation {
+                result.append(TranslatedLine(source: lines[index].source, translation: translation))
+            }
+            index -= 1
+        }
+        return result.reversed()
+    }
+
+    // MARK: - Internals
+
+    /// Replaces the lines of the current recognizer result, in place.
+    private mutating func replaceCurrentResult(with segments: [String], isFinal: Bool) {
+        lines.removeSubrange(finalCount...)
+        for (offset, segment) in segments.enumerated() {
+            lines.append(Line(id: finalCount + offset, source: segment, translation: translations[segment], isFinal: isFinal))
+        }
+        if shownCount > lines.count {
+            // Shown captions are locked, so this shouldn't happen; if it does, the UI loses lines.
+            Trace.shared.event("seg.shown_lost", ["shown": shownCount, "lines": lines.count])
+            shownCount = lines.count
+        }
+        advanceShown()
+    }
+
+    private mutating func advanceShown() {
+        while shownCount < lines.count, lines[shownCount].translation != nil {
+            shownCount += 1
+        }
+        // Whatever is shown must be locked, including lines shown straight from the cache.
+        if shownCount - finalCount > locked.count {
+            locked = lines[finalCount..<shownCount].map(\.source)
+        }
+    }
+
+    /// Drops the draft once the in-progress text it was made from has completed or been replaced.
+    private mutating func dropStaleDraft() {
+        guard draftTranslation != nil, volatile.isEmpty || !Self.continues(volatile, from: draftSource) else { return }
+        draftTranslation = nil
+        draftSource = ""
+    }
+
+    /// Whether `text` is (a revision or extension of) the speech `earlier` was taken from.
+    static func continues(_ text: String, from earlier: String) -> Bool {
+        let probe = earlier.prefix(min(4, earlier.count))
+        return !probe.isEmpty && text.hasPrefix(probe)
+    }
+
+    /// The tokens after the locked lines.
     private func unlocked(_ tokens: [Token]) -> [Token] {
         let characters = Segmenter.characters(tokens)
         guard !locked.isEmpty else { return characters }
@@ -136,91 +244,4 @@ public struct Transcript: Sendable, Equatable {
         }
         return Array(tokens[index...])
     }
-
-    /// Lines with no translation and none in flight.
-    public var untranslated: [Line] {
-        lines.filter { $0.translation == nil && !inFlight.contains($0.source) }
-    }
-
-    public mutating func beginTranslation(forSource source: String) {
-        inFlight.insert(source)
-    }
-
-    public mutating func setTranslation(_ translation: String, forSource source: String) {
-        inFlight.remove(source)
-        translations[source] = translation
-        for index in lines.indices where lines[index].source == source {
-            lines[index].translation = translation
-        }
-        // A provisional line becomes visible once translated: lock it and everything before it.
-        if let index = lines.indices.last(where: { $0 >= finalCount && lines[$0].source == source }),
-           index - finalCount + 1 > locked.count {
-            locked = lines[finalCount...index].map(\.source)
-        }
-    }
-
-    /// Lines ready to show as captions: translated (or carrying a draft), in order.
-    public var shownLines: ArraySlice<Line> {
-        lines.prefix { $0.translation != nil || $0.interimTranslation != nil }
-    }
-
-    /// Recognized text not yet shown as a caption: segmented lines awaiting translation plus the
-    /// segment still being spoken.
-    public var pendingText: String {
-        (lines.dropFirst(shownLines.count).map(\.source) + [volatile]).joined()
-    }
-
-    /// Lets a failed line be requested again on the next event.
-    public mutating func translationFailed(forSource source: String) {
-        inFlight.remove(source)
-    }
-
-    /// Records a draft translation of `source`, a snapshot of the in-progress text. Ignored if that
-    /// text has since been completed or replaced.
-    public mutating func setDraftTranslation(_ translation: String, forSource source: String) {
-        guard !volatile.isEmpty, Self.continues(volatile, from: source) else { return }
-        draftTranslation = translation
-        draftSource = source
-    }
-
-    /// When the in-progress text has moved on (completed into a line, or replaced), the draft no
-    /// longer describes it: hand it to the line it became, then drop it.
-    private mutating func carryDraft() {
-        guard let draft = draftTranslation else { return }
-        if !volatile.isEmpty, Self.continues(volatile, from: draftSource) { return }
-        if let index = lines.lastIndex(where: { Self.continues($0.source, from: draftSource) }),
-           lines[index].translation == nil {
-            lines[index].interimTranslation = draft
-        }
-        draftTranslation = nil
-        draftSource = ""
-    }
-
-    /// Whether `text` is (a revision or extension of) the speech `earlier` was taken from.
-    static func continues(_ text: String, from earlier: String) -> Bool {
-        let probe = earlier.prefix(min(4, earlier.count))
-        return !probe.isEmpty && text.hasPrefix(probe)
-    }
-
-    /// Up to `limit` translated lines immediately before `id`, oldest first.
-    public func context(before id: Line.ID, limit: Int) -> [TranslatedLine] {
-        lines
-            .filter { $0.id < id }
-            .compactMap { line in line.translation.map { TranslatedLine(source: line.source, translation: $0) } }
-            .suffix(limit)
-    }
-
-    public func line(_ id: Line.ID) -> Line? {
-        lines.first { $0.id == id }
-    }
-
-    private mutating func replaceProvisional(with segments: [String], isFinal: Bool) {
-        let previous = lines.dropFirst(finalCount)
-        lines = Array(lines.prefix(finalCount)) + segments.enumerated().map { offset, segment in
-            let interim = previous.first { Self.continues(segment, from: $0.source) || Self.continues($0.source, from: segment) }?.interimTranslation
-            return Line(id: finalCount + offset, source: segment, translation: translations[segment],
-                        interimTranslation: interim, isFinal: isFinal)
-        }
-    }
-
 }

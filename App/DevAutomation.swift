@@ -8,7 +8,7 @@ import InstantCore
 ///   INSTANT_DEMO_AUDIO=Samples/ja-meeting.aiff INSTANT_SNAPSHOT=/tmp/instant INSTANT_SNAPSHOT_AT=1,10,26 \
 ///     <Xcode DerivedData>/Build/Products/Debug/Instant.app/Contents/MacOS/Instant
 ///
-/// INSTANT_DEMO_START=<seconds> skips into the demo audio. INSTANT_INPUT=system starts listening to Mac audio instead. Each snapshot also writes the
+/// INSTANT_DEMO_START=<seconds> skips into the demo audio, INSTANT_DEMO_SPEED=<rate> plays it faster. INSTANT_INPUT=system starts listening to Mac audio instead. Each snapshot also writes the
 /// transcript next to the PNG as .txt.
 enum DevAutomation {
     @MainActor
@@ -27,7 +27,8 @@ enum DevAutomation {
         }
         if let audio = env["INSTANT_DEMO_AUDIO"] {
             let start = env["INSTANT_DEMO_START"].flatMap(TimeInterval.init) ?? 0
-            await session.start(audioSource: FileAudioSource(url: URL(fileURLWithPath: audio), startTime: start))
+            let speed = env["INSTANT_DEMO_SPEED"].flatMap(Double.init) ?? 1
+            await session.start(audioSource: FileAudioSource(url: URL(fileURLWithPath: audio), startTime: start, speed: speed))
         } else if env["INSTANT_INPUT"] == "system" {
             session.input = .systemAudio
             await session.start()
@@ -41,7 +42,7 @@ enum DevAutomation {
             "tail": transcript.volatile,
         ])
         // What's on screen: captions, then the pending (not yet translated) text.
-        var text = transcript.shownLines.map { "\($0.translation ?? $0.interimTranslation ?? "")\n  \($0.source)" }.joined(separator: "\n")
+        var text = transcript.shownLines.map { "\($0.translation ?? "")\n  \($0.source)" }.joined(separator: "\n")
         if !transcript.pendingText.isEmpty {
             text += "\n…  \(transcript.pendingText)"
         }

@@ -1,7 +1,9 @@
 import InstantCore
 import SwiftUI
 
-/// Caption size, chosen from the toolbar's Aa menu.
+/// Caption size from the Aa menu (and ⌘+ / ⌘− on the Mac). On iOS it's applied as a Dynamic Type
+/// size, so captions also respect the system text size; macOS text styles don't scale with
+/// Dynamic Type, so there it picks point sizes, like Mail and Messages do.
 enum CaptionSize: String, CaseIterable, Identifiable {
     case small, medium, large, extraLarge
 
@@ -16,15 +18,33 @@ enum CaptionSize: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Point sizes for the translation and the original underneath it.
-    var translation: CGFloat { [.small: 17, .medium: 21, .large: 26, .extraLarge: 32][self]! }
-    var original: CGFloat { [.small: 12, .medium: 14, .large: 16, .extraLarge: 19][self]! }
+    #if os(macOS)
+    var translationFont: Font { .system(size: [.small: 17, .medium: 21, .large: 26, .extraLarge: 32][self]!, weight: .semibold) }
+    var originalFont: Font { .system(size: [.small: 12, .medium: 14, .large: 17, .extraLarge: 20][self]!) }
+    #else
+    var translationFont: Font { .title2.weight(.semibold) }
+    var originalFont: Font { .callout }
+    #endif
+
+    var larger: CaptionSize? { Self.allCases.firstIndex(of: self).flatMap { Self.allCases.indices.contains($0 + 1) ? Self.allCases[$0 + 1] : nil } }
+    var smaller: CaptionSize? { Self.allCases.firstIndex(of: self).flatMap { $0 > 0 ? Self.allCases[$0 - 1] : nil } }
+
+    var dynamicTypeSize: DynamicTypeSize {
+        switch self {
+        case .small: .medium
+        case .medium: .xLarge
+        case .large: .xxxLarge
+        case .extraLarge: .accessibility2
+        }
+    }
 }
 
 /// Live captions, filling from the top like subtitles: new lines are added below and the view
 /// follows them once it's full, unless the reader has scrolled back.
 struct TranscriptView: View {
-    let transcript: Transcript
+    let captions: [Line]
+    let pendingText: String
+    let draftTranslation: String?
     let isListening: Bool
     let size: CaptionSize
 
@@ -35,7 +55,7 @@ struct TranscriptView: View {
     @State private var readerScrolling = false
 
     var body: some View {
-        if transcript.lines.isEmpty, transcript.pendingText.isEmpty {
+        if captions.isEmpty, pendingText.isEmpty {
             ContentUnavailableView {
                 Label(isListening ? "聆聽中…" : "按「開始」", systemImage: "waveform")
                     .symbolEffect(.variableColor.iterative, isActive: isListening)
@@ -44,15 +64,14 @@ struct TranscriptView: View {
             }
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: size.translation * 0.9) {
-                    // Only translated lines become captions, and they never change once shown.
-                    ForEach(transcript.shownLines) { line in
-                        CaptionView(translation: line.translation ?? line.interimTranslation, original: line.source,
-                                    state: line.translation == nil ? .interim : .final, size: size)
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    // Captions never change once shown, so equal rows skip re-rendering.
+                    ForEach(captions) { line in
+                        CaptionRow(translation: line.translation ?? "", original: line.source, size: size)
+                            .equatable()
                     }
-                    if !transcript.pendingText.isEmpty {
-                        CaptionView(translation: transcript.draftTranslation, original: transcript.pendingText,
-                                    state: .live, size: size)
+                    if !pendingText.isEmpty {
+                        LiveRow(original: pendingText, draft: draftTranslation, size: size)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -75,14 +94,14 @@ struct TranscriptView: View {
                 following = atBottom
                 Trace.shared.event("ui.follow", ["following": atBottom])
             }
-            .onChange(of: transcript) { old, new in
+            // Glide when a caption is added; snap while the live text grows, so nothing wobbles.
+            .onChange(of: captions.count) {
                 guard following else { return }
-                // Glide when a caption is added; snap while the live text grows, so nothing wobbles.
-                if new.shownLines.count != old.shownLines.count {
-                    withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
-                } else {
-                    position.scrollTo(edge: .bottom)
-                }
+                withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+            }
+            .onChange(of: pendingText) {
+                guard following else { return }
+                position.scrollTo(edge: .bottom)
             }
             .overlay(alignment: .bottomTrailing) {
                 if !following {
@@ -99,53 +118,47 @@ struct TranscriptView: View {
     }
 }
 
-private struct CaptionView: View {
-    enum State {
-        case final, provisional
-        /// Finished speaking; showing its draft until the line's own translation arrives.
-        case interim
-        case live
-    }
-
-    let translation: String?
+/// A shown caption: translation, with the original underneath.
+private struct CaptionRow: View, Equatable {
+    let translation: String
     let original: String
-    let state: State
     let size: CaptionSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: size.original * 0.35) {
-            translationText
-                .font(.system(size: size.translation, weight: .semibold))
-                .lineSpacing(size.translation * 0.15)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if state == .live {
-                    Image(systemName: "waveform")
-                        .symbolEffect(.variableColor.iterative)
-                        .foregroundStyle(.green)
-                }
-                Text(original)
-                    .foregroundStyle(state == .live ? .primary : .secondary)
-            }
-            .font(.system(size: size.original))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(translation)
+                .font(size.translationFont)
+            Text(original)
+                .font(size.originalFont)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    @ViewBuilder
-    private var translationText: some View {
-        switch state {
-        case .final:
-            Text(translation ?? "…").foregroundStyle(translation == nil ? .tertiary : .primary)
-        case .provisional:
-            Text(translation ?? "…").foregroundStyle(.primary.opacity(0.85))
-        case .interim:
-            Text(translation ?? "…").foregroundStyle(.secondary)
-        case .live:
-            // Speech still in progress: no translation yet (unless drafts are enabled).
-            if let translation {
-                Text(translation).foregroundStyle(.secondary)
+/// Speech not yet captioned: the recognized Japanese, still changing.
+private struct LiveRow: View {
+    let original: String
+    let draft: String?
+    let size: CaptionSize
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let draft {
+                Text(draft)
+                    .font(size.translationFont)
+                    .foregroundStyle(.secondary)
             }
+            Label {
+                Text(original)
+            } icon: {
+                Image(systemName: "waveform")
+                    .symbolEffect(.variableColor.iterative)
+                    .foregroundStyle(.green)
+            }
+            .font(size.originalFont)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -158,7 +171,13 @@ struct StatusBar: View {
             Label(session.status.isActive ? session.sourceDescription : (session.input == .microphone ? "麥克風" : "Mac 聲音"),
                   systemImage: session.input == .microphone ? "mic" : "speaker.wave.2")
             TimelineView(.animation(minimumInterval: 0.08, paused: session.status != .running)) { _ in
-                LevelMeterView(level: session.status == .running ? session.audioLevel : 0)
+                Gauge(value: session.status == .running ? Self.meterValue(session.audioLevel) : 0) {
+                    Text("音量")
+                }
+                .gaugeStyle(.accessoryLinearCapacity)
+                .tint(.green)
+                .frame(width: 72)
+                .labelsHidden()
             }
             Spacer()
             Label("裝置上處理", systemImage: "lock")
@@ -166,27 +185,14 @@ struct StatusBar: View {
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .labelStyle(.titleAndIcon)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.bar)
     }
-}
 
-private struct LevelMeterView: View {
-    let level: Float
-
-    var body: some View {
-        // Map dBFS (-60…0) to the bar width so quiet speech still registers.
+    /// Maps peak level (dBFS -60…0) to 0…1 so quiet speech still registers.
+    private static func meterValue(_ level: Float) -> Double {
         let dB = 20 * log10(max(Double(level), 1e-4))
-        let fill = min(max((dB + 60) / 60, 0), 1)
-        Capsule()
-            .fill(.quaternary)
-            .frame(width: 72, height: 4)
-            .overlay(alignment: .leading) {
-                Capsule().fill(.green).frame(width: 72 * fill, height: 4)
-            }
-            .animation(.linear(duration: 0.08), value: fill)
-            .accessibilityLabel("音量")
+        return min(max((dB + 60) / 60, 0), 1)
     }
 }

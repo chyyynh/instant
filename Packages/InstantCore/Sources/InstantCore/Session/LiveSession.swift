@@ -35,7 +35,16 @@ public final class LiveSession {
         }
     }
 
-    public private(set) var transcript = Transcript()
+    /// Full pipeline state. Not observed directly: it changes several times a second, and views
+    /// observing it would all re-render. Views use `captions`, `pendingText` and `draftTranslation`.
+    @ObservationIgnored public private(set) var transcript = Transcript() {
+        didSet { publish() }
+    }
+    /// Shown captions, append-only: a caption never changes once added.
+    public private(set) var captions: [Line] = []
+    /// Recognized text not yet a caption (Japanese only).
+    public private(set) var pendingText = ""
+    public private(set) var draftTranslation: String?
     public private(set) var status: Status = .idle {
         didSet { if status != oldValue { Trace.shared.event("session.status", ["status": "\(status)"]) } }
     }
@@ -73,6 +82,7 @@ public final class LiveSession {
     private var settleTask: Task<Void, Never>?
     private var stableTimers: [String: Task<Void, Never>] = [:]
     private var stallProbe: Task<Void, Never>?
+    private var handleTimes: [Double] = []
     /// Keeps macOS from App-Napping us while the user watches another app: in the background,
     /// translation round-trips went from ~70ms to ~1.3s without it.
     private var activity: NSObjectProtocol?
@@ -141,7 +151,19 @@ public final class LiveSession {
     public func clear() {
         guard !status.isActive else { return }
         transcript = Transcript()
+        captions = []
         status = .idle
+    }
+
+    /// Copies what views show out of `transcript`, assigning only what changed so observers of
+    /// one property aren't invalidated by changes to another.
+    private func publish() {
+        if transcript.shownCount > captions.count {
+            captions.append(contentsOf: transcript.lines[captions.count..<transcript.shownCount])
+        }
+        let pending = transcript.pendingText
+        if pending != pendingText { pendingText = pending }
+        if transcript.draftTranslation != draftTranslation { draftTranslation = transcript.draftTranslation }
     }
 
     public func translationDownloadFinished() {
@@ -152,18 +174,34 @@ public final class LiveSession {
     // MARK: - Pipeline
 
     private func handle(_ event: TranscriptEvent) {
-        let before = transcript.lines
+        let started = ContinuousClock.now
+        defer {
+            // Main-actor time spent per recognizer event; grows if anything is O(transcript length).
+            handleTimes.append(Trace.seconds(ContinuousClock.now - started) * 1000)
+            if handleTimes.count == 50 {
+                let sorted = handleTimes.sorted()
+                Trace.shared.event("main.handle", [
+                    "lines": transcript.lines.count,
+                    "p50_ms": sorted[25].rounded(toPlaces: 2),
+                    "max_ms": sorted[49].rounded(toPlaces: 2),
+                ])
+                handleTimes.removeAll(keepingCapacity: true)
+            }
+        }
+        let start = transcript.mutableStart
+        let before = Array(transcript.lines[start...])
         transcript.apply(event)
-        traceSegmentation(before: before, cause: { if case .final = event { "final" } else { "volatile" } }())
+        traceSegmentation(before: before, from: start, cause: { if case .final = event { "final" } else { "volatile" } }())
         scheduleTranslations()
         settleTask?.cancel()
         guard !transcript.volatile.isEmpty else { return }
         settleTask = Task { [weak self, settleDelay] in
             try? await Task.sleep(for: settleDelay)
             guard !Task.isCancelled, let self else { return }
-            let before = transcript.lines
+            let start = transcript.mutableStart
+            let before = Array(transcript.lines[start...])
             transcript.settleTail()
-            traceSegmentation(before: before, cause: "settle")
+            traceSegmentation(before: before, from: start, cause: "settle")
             scheduleTranslations()
         }
         if draftTranslationsEnabled, draftTask == nil {
@@ -189,7 +227,7 @@ public final class LiveSession {
             }
         }
         // Drop timers for text the recognizer has since revised away.
-        let present = Set(transcript.lines.map(\.source))
+        let present = Set(transcript.lines[transcript.shownCount...].map(\.source))
         for (source, timer) in stableTimers where !present.contains(source) {
             timer.cancel()
             stableTimers[source] = nil
@@ -212,7 +250,8 @@ public final class LiveSession {
                     "translation": translation,
                     "ms": Int((Trace.shared.elapsed - requested) * 1000),
                     // The recognizer revised this line while it was being translated: wasted work.
-                    "stale": !transcript.lines.contains { $0.source == line.source },
+                    "stale": !transcript.lines[transcript.mutableStart...].contains { $0.source == line.source }
+                        && !transcript.shownLines.suffix(8).contains { $0.source == line.source },
                 ])
             } catch {
                 transcript.translationFailed(forSource: line.source)
@@ -242,8 +281,8 @@ public final class LiveSession {
     }
 
     /// Records which lines appeared, changed or disappeared, and the remaining in-progress text.
-    private func traceSegmentation(before: [Line], cause: String) {
-        let after = transcript.lines
+    private func traceSegmentation(before: [Line], from start: Int, cause: String) {
+        let after = transcript.lines[min(start, transcript.lines.count)...]
         let added = after.filter { line in !before.contains { $0.id == line.id } }
         let changed = after.filter { line in before.contains { $0.id == line.id && ($0.source != line.source || $0.isFinal != line.isFinal) } }
         let removed = before.filter { line in !after.contains { $0.id == line.id } }

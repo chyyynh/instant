@@ -47,7 +47,7 @@ public final class Trace: @unchecked Sendable {
         }
     }
 
-    static func seconds(_ duration: Duration) -> TimeInterval {
+    public static func seconds(_ duration: Duration) -> TimeInterval {
         Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 }

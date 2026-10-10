@@ -8,7 +8,12 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            TranscriptView(transcript: session.transcript, isListening: session.status == .running, size: captionSize)
+            TranscriptView(captions: session.captions, pendingText: session.pendingText,
+                           draftTranslation: session.draftTranslation, isListening: session.status == .running,
+                           size: captionSize)
+                #if os(iOS)
+                .dynamicTypeSize(captionSize.dynamicTypeSize)
+                #endif
                 .navigationTitle(LanguagePickers.title(for: session))
                 .toolbarTitleMenu { LanguagePickers(session: session) }
                 #if os(macOS)
