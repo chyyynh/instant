@@ -280,6 +280,24 @@ public final class LiveSession {
         }
     }
 
+    #if DEBUG
+    /// Debug-only: puts the session in a canned listening state (captions with speakers, speech in
+    /// progress) without running the pipeline, so the UI can be checked where speech recognition
+    /// can't run, such as the Simulator.
+    public func showDemoState(captions demo: [(speaker: Int, source: String, translation: String)],
+                              pending: String, draft: String?, elapsed: TimeInterval) {
+        captions = demo.enumerated().map { index, line in
+            Line(id: index, source: line.source, translation: line.translation, isFinal: true, speaker: line.speaker)
+        }
+        speakerOrder = demo.map(\.speaker).reduce(into: []) { order, slot in if !order.contains(slot) { order.append(slot) } }
+        pendingText = pending
+        draftTranslation = draft
+        sourceDescription = input == .microphone ? "麥克風" : "Mac 聲音"
+        startedAt = .now - elapsed
+        status = .running
+    }
+    #endif
+
     /// Display name for a diarized speaker slot.
     public func speakerName(_ speaker: Int) -> String {
         speakerNames[speaker] ?? String(UnicodeScalar(UInt8(65 + (speakerOrder.firstIndex(of: speaker) ?? speaker))))

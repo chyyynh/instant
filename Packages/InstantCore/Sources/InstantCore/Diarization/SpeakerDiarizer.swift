@@ -32,7 +32,8 @@ public final class SpeakerDiarizer: @unchecked Sendable {
     }
 
     /// Loads the model, downloading it (~240 MB) from HuggingFace the first time.
-    /// `INSTANT_SPK_CONFIG` (fast | balanced) picks the Sortformer variant, for e2e comparisons.
+    /// `INSTANT_SPK_CONFIG` (fast | balanced) picks the Sortformer variant, for e2e comparisons;
+    /// `INSTANT_SPK_CACHE` (a directory) keeps the model elsewhere, e.g. to test the first download.
     public static func load(downloadProgress: (@Sendable (Double) -> Void)? = nil) async throws -> SpeakerDiarizer {
         let variant = ProcessInfo.processInfo.environment["INSTANT_SPK_CONFIG"] ?? "fast"
         let config: SortformerConfig = variant == "balanced" ? .balancedV2_1 : .default
@@ -40,8 +41,13 @@ public final class SpeakerDiarizer: @unchecked Sendable {
         // CPU+GPU: the Neural Engine path recompiles the model on every app launch (~21s before
         // any speaker is known); CPU+GPU loads in ~0.4s.
         let units: MLComputeUnits = ProcessInfo.processInfo.environment["INSTANT_SPK_UNITS"] == "all" ? .all : .cpuAndGPU
-        let models = try await SortformerModels.loadFromHuggingFace(config: config, computeUnits: units) { progress in
-            downloadProgress?(progress.fractionCompleted)
+        let cache = ProcessInfo.processInfo.environment["INSTANT_SPK_CACHE"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let models = try await SortformerModels.loadFromHuggingFace(config: config, cacheDirectory: cache, computeUnits: units) { progress in
+            // Only actual downloading counts: loading a cached model also reports progress (its
+            // compile phase). FluidAudio weights downloading as the first half of the operation.
+            if case .downloading = progress.phase {
+                downloadProgress?(min(progress.fractionCompleted / 0.5, 1))
+            }
         }
         let diarizer = SortformerDiarizer(config: config)
         diarizer.initialize(models: models)
