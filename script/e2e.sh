@@ -16,9 +16,15 @@ fi
 (cd Packages/InstantCore && swift build -q --product instant-lab)
 LAB=Packages/InstantCore/.build/out/Products/Debug/instant-lab
 
+# Reference speaker turns for the podcast clip, from offline (whole-clip) diarization.
+PODCAST_SPEAKERS="$SAMPLES/yuru-pepper-150-90.speakers.json"
+if [[ ! -f "$PODCAST_SPEAKERS" ]]; then
+  "$LAB" reference "$PODCAST" --start 150 --duration 90 --out "$PODCAST_SPEAKERS" | tail -1
+fi
+
 run() { "$LAB" run "$@"; }
 case "${1:-all}" in
-  podcast|all) run "$PODCAST" --start 150 --duration 90 --trace /tmp/instant-e2e-podcast.jsonl ;|
+  podcast|all) run "$PODCAST" --start 150 --duration 90 --truth "$PODCAST_SPEAKERS" --trace /tmp/instant-e2e-podcast.jsonl ;|
   meeting|all) run "$SAMPLES/ja-meeting.aiff" --trace /tmp/instant-e2e-meeting.jsonl ;|
   # Slow speech with long silences: volatile results then span long stretches with few characters.
   slow|all) run "$SAMPLES/ja-slow.aiff" --trace /tmp/instant-e2e-slow.jsonl ;;

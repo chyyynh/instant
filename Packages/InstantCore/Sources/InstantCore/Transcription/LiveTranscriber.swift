@@ -85,12 +85,20 @@ public final class LiveTranscriber {
 
         let (events, eventContinuation) = AsyncThrowingStream<TranscriptEvent, Error>.makeStream()
         resultsTask = Task.detached {
+            var estimator = VolatileTimeEstimator()
             do {
                 for try await result in transcriber.results {
-                    let tokens = result.text.runs.map { run in
-                        let range = run.audioTimeRange
-                        return Token(String(result.text[run.range].characters),
-                                     start: range?.start.seconds ?? 0, end: range?.end.seconds ?? 0)
+                    let tokens: [Token]
+                    if result.isFinal {
+                        tokens = result.text.runs.map { run in
+                            let range = run.audioTimeRange
+                            return Token(String(result.text[run.range].characters),
+                                         start: range?.start.seconds ?? 0, end: range?.end.seconds ?? 0)
+                        }
+                        estimator.reset()
+                    } else {
+                        tokens = estimator.tokens(for: String(result.text.characters),
+                                                  start: result.range.start.seconds, end: result.range.end.seconds)
                     }
                     let end = result.range.end.seconds
                     Trace.shared.event("asr.result", [
@@ -236,5 +244,36 @@ public final class LevelMeter: @unchecked Sendable {
     /// Peak level, falling to 0 if no audio has arrived for half a second.
     public var value: Float {
         lock.withLock { Date.now.timeIntervalSince(updated) < 0.5 ? peak : 0 }
+    }
+}
+
+/// Estimates when each character of in-progress results was spoken. Volatile results carry one
+/// time range for all text since the last final, but each update extends it: characters that
+/// weren't in the previous hypothesis were spoken between the previous result's end and this
+/// one's. That places them within about a second, enough to tell who said a line. The estimates
+/// are marked untimed so they never count as pauses for segmentation.
+struct VolatileTimeEstimator {
+    private var characters: [Character] = []
+    private var times: [(start: TimeInterval, end: TimeInterval)] = []
+
+    mutating func reset() {
+        characters = []
+        times = []
+    }
+
+    mutating func tokens(for text: String, start: TimeInterval, end: TimeInterval) -> [Token] {
+        let new = Array(text)
+        let kept = zip(new, characters).prefix { $0 == $1 }.count
+        var updated = Array(times.prefix(kept))
+        // Revised or appended characters fill the span after the last unchanged one.
+        let spanStart = max(updated.last?.end ?? start, start)
+        let step = max(end - spanStart, 0) / Double(max(new.count - kept, 1))
+        for offset in 0..<(new.count - kept) {
+            let characterStart = spanStart + step * Double(offset)
+            updated.append((characterStart, characterStart + step))
+        }
+        characters = new
+        times = updated
+        return zip(new, updated).map { Token(String($0), start: $1.start, end: $1.end, isTimed: false) }
     }
 }

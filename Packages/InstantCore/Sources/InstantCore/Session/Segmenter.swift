@@ -21,6 +21,13 @@ public struct Token: Sendable, Equatable {
     var pauseEvidence: TimeInterval { isTimed ? duration : 0 }
 }
 
+/// A piece of recognized speech and where it sits in the audio (seconds since the session began).
+public struct Segment: Sendable, Equatable {
+    public let text: String
+    public let start: TimeInterval
+    public let end: TimeInterval
+}
+
 /// Splits recognized speech into readable segments.
 ///
 /// Apple's recognizer often omits punctuation in fast conversation, so punctuation alone yields
@@ -41,7 +48,7 @@ public struct Segmenter: Sendable, Equatable {
 
     /// Returns complete segments and the trailing in-progress text.
     /// - Parameter isFinal: When true, the trailing text is complete too and is returned as a segment.
-    public func split(_ tokens: [Token], isFinal: Bool) -> (segments: [String], tail: String) {
+    public func split(_ tokens: [Token], isFinal: Bool) -> (segments: [Segment], tail: Segment?) {
         var groups: [[Token]] = []
         var current: [Token] = []
         for token in Self.characters(tokens) {
@@ -63,7 +70,13 @@ public struct Segmenter: Sendable, Equatable {
         if !isFinal, let last = pieces.last, !Self.terminators.contains(last.last?.text ?? "") {
             tail = pieces.removeLast()
         }
-        return (pieces.map(Self.text).filter { !$0.isEmpty }, Self.text(tail))
+        return (pieces.compactMap(Self.segment), Self.segment(tail))
+    }
+
+    static func segment(_ tokens: [Token]) -> Segment? {
+        let text = text(tokens)
+        guard !text.isEmpty, let first = tokens.first, let last = tokens.last else { return nil }
+        return Segment(text: text, start: first.start, end: last.end)
     }
 
     /// Cuts left to right, choosing each cut only from the first `maxLength` characters, so a cut

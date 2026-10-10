@@ -10,7 +10,8 @@ struct ContentView: View {
         NavigationStack {
             TranscriptView(captions: session.captions, pendingText: session.pendingText,
                            draftTranslation: session.draftTranslation, isListening: session.status == .running,
-                           size: captionSize)
+                           size: captionSize, speakerNames: session.speakerNames, speakerOrder: session.speakerOrder,
+                           onRenameSpeaker: { speaker, name in session.speakerNames[speaker] = name.isEmpty ? nil : name })
                 #if os(iOS)
                 .dynamicTypeSize(captionSize.dynamicTypeSize)
                 #endif
@@ -48,6 +49,12 @@ struct ContentView: View {
                 .pickerStyle(.segmented)
                 .disabled(session.status.isActive)
             }
+        }
+        ToolbarItem {
+            Toggle("區分說話者", systemImage: "person.2", isOn: $session.speakerDiarizationEnabled)
+                .toggleStyle(.button)
+                .help("用聲音分辨不同說話者（第一次使用會下載約 240 MB 的模型）")
+                .disabled(session.status.isActive)
         }
         ToolbarItem {
             Menu("字級", systemImage: "textformat.size") {

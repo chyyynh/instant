@@ -8,3 +8,4 @@ Samples/*.mp3
 .swiftpm/
 Packages/InstantCore/.swiftpm/
 xcuserdata/
+Samples/*.speakers.json

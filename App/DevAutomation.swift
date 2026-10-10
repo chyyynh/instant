@@ -21,7 +21,7 @@ enum DevAutomation {
                 for time in times.sorted() {
                     try? await Task.sleep(until: start + .seconds(time))
                     snapshot(to: "\(path)-\(Int(time))s.png")
-                    dumpTranscript(session.transcript, to: "\(path)-\(Int(time))s.txt")
+                    dumpTranscript(session, to: "\(path)-\(Int(time))s.txt")
                 }
             }
         }
@@ -35,14 +35,19 @@ enum DevAutomation {
         }
     }
 
-    private static func dumpTranscript(_ transcript: Transcript, to path: String) {
+    @MainActor
+    private static func dumpTranscript(_ session: LiveSession, to path: String) {
+        let transcript = session.transcript
         // Also into the trace, so `instant-lab report` has the on-screen lines even if the app is killed.
         Trace.shared.event("ui.snapshot", [
             "lines": transcript.lines.map { ["id": $0.id, "source": $0.source, "translation": $0.translation ?? "", "final": $0.isFinal] as [String: any Sendable] },
             "tail": transcript.volatile,
         ])
         // What's on screen: captions, then the pending (not yet translated) text.
-        var text = transcript.shownLines.map { "\($0.translation ?? "")\n  \($0.source)" }.joined(separator: "\n")
+        var text = session.captions.map { line in
+            let speaker = line.speaker.map { "[\(session.speakerName($0))] " } ?? ""
+            return "\(speaker)\(line.translation ?? "")\n  \(line.source)"
+        }.joined(separator: "\n")
         if !transcript.pendingText.isEmpty {
             text += "\n…  \(transcript.pendingText)"
         }

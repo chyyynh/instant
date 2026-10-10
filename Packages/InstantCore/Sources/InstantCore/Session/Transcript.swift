@@ -7,6 +7,12 @@ public struct Line: Identifiable, Sendable, Equatable {
     public var translation: String?
     /// False while the segment is still part of the recognizer's in-progress result and may be revised.
     public var isFinal: Bool
+    /// Where the line was spoken, in seconds since the session began. Exact for final results;
+    /// estimated to about a second for in-progress ones (see `LiveTranscriber`).
+    public var start: TimeInterval = 0
+    public var end: TimeInterval = 0
+    /// Diarized speaker slot, set when the line becomes a caption.
+    public var speaker: Int?
 }
 
 /// The running transcript, split into segments.
@@ -25,7 +31,8 @@ public struct Transcript: Sendable {
     /// Captions (`lines[..<shownCount]`), then lines waiting for translation, then provisional lines.
     public private(set) var lines: [Line] = []
     /// The segment still being spoken.
-    public private(set) var volatile = ""
+    public var volatile: String { tail?.text ?? "" }
+    private var tail: Segment?
     /// Rough translation of (a recent snapshot of) `volatile`, when drafts are enabled.
     public private(set) var draftTranslation: String?
     /// How many leading lines are captions: translated, in order, never changing again.
@@ -38,7 +45,7 @@ public struct Transcript: Sendable {
     /// Lines of the current recognizer result that must not change any more: shown captions and
     /// lines settled after a pause. Later results — revisions, and the final with its own
     /// segmentation — only affect the text after them.
-    private var locked: [String] = []
+    private var locked: [Segment] = []
     private var draftSource = ""
     private var translations: [String: String] = [:]
     private var inFlight: Set<String> = []
@@ -72,13 +79,13 @@ public struct Transcript: Sendable {
         case .volatile(let tokens):
             let (segments, tail) = segmenter.split(unlocked(tokens), isFinal: false)
             replaceCurrentResult(with: locked + segments, isFinal: false)
-            volatile = tail
+            self.tail = tail
         case .final(let tokens):
             let (segments, _) = segmenter.split(unlocked(tokens), isFinal: true)
             replaceCurrentResult(with: locked + segments, isFinal: true)
             finalCount = lines.count
             locked = []
-            volatile = ""
+            tail = nil
         }
         dropStaleDraft()
     }
@@ -86,10 +93,11 @@ public struct Transcript: Sendable {
     /// Treats the in-progress segment as complete, e.g. after the speaker has been silent a while
     /// but the recognizer hasn't finalized yet. Locks all lines of the current result.
     public mutating func settleTail() {
-        guard !volatile.isEmpty else { return }
-        lines.append(Line(id: lines.count, source: volatile, translation: translations[volatile], isFinal: false))
-        locked = lines[finalCount...].map(\.source)
-        volatile = ""
+        guard let tail else { return }
+        lines.append(Line(id: lines.count, source: tail.text, translation: translations[tail.text], isFinal: false,
+                          start: tail.start, end: tail.end))
+        locked = lines[finalCount...].map(Self.segment)
+        self.tail = nil
         dropStaleDraft()
         advanceShown()
     }
@@ -110,7 +118,7 @@ public struct Transcript: Sendable {
         }
         // A line about to be shown gets locked, along with everything before it in this result.
         if let index = lastMatch, index >= finalCount, index - finalCount + 1 > locked.count {
-            locked = lines[finalCount...index].map(\.source)
+            locked = lines[finalCount...index].map(Self.segment)
         }
         advanceShown()
     }
@@ -144,10 +152,11 @@ public struct Transcript: Sendable {
     // MARK: - Internals
 
     /// Replaces the lines of the current recognizer result, in place.
-    private mutating func replaceCurrentResult(with segments: [String], isFinal: Bool) {
+    private mutating func replaceCurrentResult(with segments: [Segment], isFinal: Bool) {
         lines.removeSubrange(finalCount...)
         for (offset, segment) in segments.enumerated() {
-            lines.append(Line(id: finalCount + offset, source: segment, translation: translations[segment], isFinal: isFinal))
+            lines.append(Line(id: finalCount + offset, source: segment.text, translation: translations[segment.text],
+                              isFinal: isFinal, start: segment.start, end: segment.end))
         }
         if shownCount > lines.count {
             // Shown captions are locked, so this shouldn't happen; if it does, the UI loses lines.
@@ -163,8 +172,12 @@ public struct Transcript: Sendable {
         }
         // Whatever is shown must be locked, including lines shown straight from the cache.
         if shownCount - finalCount > locked.count {
-            locked = lines[finalCount..<shownCount].map(\.source)
+            locked = lines[finalCount..<shownCount].map(Self.segment)
         }
+    }
+
+    private static func segment(_ line: Line) -> Segment {
+        Segment(text: line.source, start: line.start, end: line.end)
     }
 
     /// Drops the draft once the in-progress text it was made from has completed or been replaced.
@@ -184,7 +197,7 @@ public struct Transcript: Sendable {
     private func unlocked(_ tokens: [Token]) -> [Token] {
         let characters = Segmenter.characters(tokens)
         guard !locked.isEmpty else { return characters }
-        let prefix = locked.joined()
+        let prefix = locked.map(\.text).joined()
         if let rest = Self.dropPrefix(prefix, from: characters) { return rest }
         // The recognizer revised text under the locked captions. Revisions are usually earlier in
         // the segment, so find where the locked text *ends* in the new hypothesis and continue

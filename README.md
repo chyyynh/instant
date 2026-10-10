@@ -12,6 +12,10 @@ project.yml             XcodeGen spec for Instant.xcodeproj
 script/e2e.sh           End-to-end runs on real speech, with a report
 ```
 
+## Speakers
+
+Instant tells speakers apart with [FluidAudio](https://github.com/FluidInference/FluidAudio)'s streaming Sortformer (up to 4 speakers, ~1s behind the audio), running on CPU+GPU next to recognition. Each caption is attributed to whoever spoke most during it; right-click a speaker label to name them (giving two labels the same name merges them). The model (~240 MB, [NVIDIA Open Model License](https://developer.nvidia.com/open-model-license)) downloads on first use; turn speakers off in the toolbar to skip it.
+
 ## Develop
 
 Requirements: Xcode 27, macOS 26+, an Apple ID signed in under Xcode › Settings › Accounts.
@@ -31,7 +35,7 @@ Signing uses the Personal Team in `project.yml` (`DEVELOPMENT_TEAM`); change it 
 ./script/e2e.sh podcast     # one sample
 ```
 
-Plays real Japanese speech through the full pipeline at real-time speed and prints latency, segmentation and translation stats plus every caption line. Each run leaves a trace in `/tmp/instant-e2e-*.jsonl`.
+Plays real Japanese speech through the full pipeline at real-time speed and prints latency, segmentation, translation and speaker stats plus every caption line. Each run leaves a trace in `/tmp/instant-e2e-*.jsonl`. Speaker accuracy on the podcast is scored against reference turns from FluidAudio's offline diarizer (`instant-lab reference`), generated on first run.
 
 ## Trace
 

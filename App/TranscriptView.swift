@@ -47,12 +47,19 @@ struct TranscriptView: View {
     let draftTranslation: String?
     let isListening: Bool
     let size: CaptionSize
+    /// Names given to diarized speaker slots.
+    let speakerNames: [Int: String]
+    /// Slots in order of first appearance, for default names A, B, C….
+    let speakerOrder: [Int]
+    let onRenameSpeaker: (Int, String) -> Void
 
     @State private var position = ScrollPosition(edge: .top)
     /// Whether to keep the newest line in view. Turned off only by the reader scrolling away from
     /// the bottom, back on when they return to it (or tap "最新").
     @State private var following = true
     @State private var readerScrolling = false
+    @State private var renaming: Int?
+    @State private var newName = ""
 
     var body: some View {
         if captions.isEmpty, pendingText.isEmpty {
@@ -65,10 +72,22 @@ struct TranscriptView: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
-                    // Captions never change once shown, so equal rows skip re-rendering.
-                    ForEach(captions) { line in
-                        CaptionRow(translation: line.translation ?? "", original: line.source, size: size)
+                    // Captions never change once shown, so equal rows skip re-rendering. Caption ids
+                    // are their indices (append-only), so the previous caption is captions[i - 1].
+                    ForEach(captions.indices, id: \.self) { index in
+                        let line = captions[index]
+                        let newSpeaker = line.speaker != nil && (index == 0 || captions[index - 1].speaker != line.speaker)
+                        CaptionRow(translation: line.translation ?? "", original: line.source, size: size,
+                                   speaker: newSpeaker ? line.speaker.map(speakerLabel) : nil)
                             .equatable()
+                            .contextMenu {
+                                if let speaker = line.speaker {
+                                    Button("重新命名「\(name(of: speaker))」…", systemImage: "pencil") {
+                                        newName = speakerNames[speaker] ?? ""
+                                        renaming = speaker
+                                    }
+                                }
+                            }
                     }
                     if !pendingText.isEmpty {
                         LiveRow(original: pendingText, draft: draftTranslation, size: size)
@@ -103,6 +122,15 @@ struct TranscriptView: View {
                 guard following else { return }
                 position.scrollTo(edge: .bottom)
             }
+            .alert("重新命名說話者", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField("名字，例如：田中", text: $newName)
+                Button("取消", role: .cancel) {}
+                Button("確定") {
+                    if let renaming { onRenameSpeaker(renaming, newName.trimmingCharacters(in: .whitespaces)) }
+                }
+            } message: {
+                Text("取同一個名字的說話者會合併顯示。")
+            }
             .overlay(alignment: .bottomTrailing) {
                 if !following {
                     Button("最新", systemImage: "arrow.down") {
@@ -118,14 +146,46 @@ struct TranscriptView: View {
     }
 }
 
-/// A shown caption: translation, with the original underneath.
+extension TranscriptView {
+    static let speakerColors: [Color] = [.blue, .orange, .green, .purple]
+
+    func name(of speaker: Int) -> String {
+        speakerNames[speaker].flatMap { $0.isEmpty ? nil : $0 }
+            ?? "說話者 \(String(UnicodeScalar(UInt8(65 + (speakerOrder.firstIndex(of: speaker) ?? speaker)))))"
+    }
+
+    /// Slots given the same name share the color of the lowest such slot, so they read as one person.
+    func speakerLabel(_ speaker: Int) -> SpeakerLabel {
+        let name = name(of: speaker)
+        let slot = speakerNames[speaker].flatMap { given in
+            speakerNames.filter { $0.value == given }.keys.min()
+        } ?? speaker
+        let colorIndex = speakerOrder.firstIndex(of: slot) ?? slot
+        return SpeakerLabel(name: name, color: Self.speakerColors[colorIndex % Self.speakerColors.count])
+    }
+}
+
+/// Name and color shown for a speaker change.
+struct SpeakerLabel: Equatable {
+    let name: String
+    let color: Color
+}
+
+/// A shown caption: translation, with the original underneath; speaker name when it changes.
 private struct CaptionRow: View, Equatable {
     let translation: String
     let original: String
     let size: CaptionSize
+    let speaker: SpeakerLabel?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if let speaker {
+                Text(speaker.name)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(speaker.color)
+                    .padding(.top, 6)
+            }
             Text(translation)
                 .font(size.translationFont)
             Text(original)
