@@ -40,3 +40,7 @@ Every pipeline stage records events (`audio.*`, `asr.*`, `seg.update`, `mt.*`, `
 ```bash
 Packages/InstantCore/.build/out/Products/Debug/instant-lab report <trace.jsonl>
 ```
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
