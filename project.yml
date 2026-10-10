@@ -6,6 +6,8 @@ options:
     macOS: "26.0"
     iOS: "26.0"
   createIntermediateGroups: true
+  # The UI is written in Traditional Chinese: system menus and language names follow it.
+  developmentLanguage: zh-Hant
 
 packages:
   InstantCore:

@@ -27,11 +27,6 @@ struct LanguagePickers: View {
         }
     }
 
-    /// e.g. "日文（日本）→ 中文（台灣）"
-    static func title(for session: LiveSession) -> String {
-        "\(name(session.sourceLocale.bcp47)) → \(name(session.targetLanguage.minimalIdentifier))"
-    }
-
     private var sourceID: Binding<String> {
         Binding(get: { session.sourceLocale.bcp47 },
                 set: { session.sourceLocale = Locale(identifier: $0) })
