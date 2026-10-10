@@ -248,6 +248,12 @@ public final class LiveSession {
         let changed = after.filter { line in before.contains { $0.id == line.id && ($0.source != line.source || $0.isFinal != line.isFinal) } }
         let removed = before.filter { line in !after.contains { $0.id == line.id } }
         guard !added.isEmpty || !changed.isEmpty || !removed.isEmpty || cause == "final" else { return }
+        // Captions already on screen (translated) must never change; count any that did.
+        let shown = Set(before.filter { $0.translation != nil }.map(\.id))
+        let rewritten = changed.filter { line in
+            shown.contains(line.id) && before.first { $0.id == line.id }?.source != line.source
+        }.map(\.id) + removed.filter { shown.contains($0.id) }.map(\.id)
+        if !rewritten.isEmpty { Trace.shared.event("seg.rewrite", ["ids": rewritten, "cause": cause]) }
         Trace.shared.event("seg.update", [
             "cause": cause,
             "added": added.map { ["id": $0.id, "source": $0.source, "final": $0.isFinal] as [String: any Sendable] },

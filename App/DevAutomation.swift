@@ -6,7 +6,7 @@ import InstantCore
 /// without Screen Recording permission (an app may always draw its own window):
 ///
 ///   INSTANT_DEMO_AUDIO=Samples/ja-meeting.aiff INSTANT_SNAPSHOT=/tmp/instant INSTANT_SNAPSHOT_AT=1,10,26 \
-///     build/DerivedData/Build/Products/Debug/Instant.app/Contents/MacOS/Instant
+///     <Xcode DerivedData>/Build/Products/Debug/Instant.app/Contents/MacOS/Instant
 ///
 /// INSTANT_DEMO_START=<seconds> skips into the demo audio. INSTANT_INPUT=system starts listening to Mac audio instead. Each snapshot also writes the
 /// transcript next to the PNG as .txt.
@@ -40,9 +40,10 @@ enum DevAutomation {
             "lines": transcript.lines.map { ["id": $0.id, "source": $0.source, "translation": $0.translation ?? "", "final": $0.isFinal] as [String: any Sendable] },
             "tail": transcript.volatile,
         ])
-        var text = transcript.lines.map { "\($0.translation ?? "（翻譯中）")\n  \($0.source)" }.joined(separator: "\n")
-        if !transcript.volatile.isEmpty {
-            text += "\n≈ \(transcript.draftTranslation ?? "")\n  … \(transcript.volatile)"
+        // What's on screen: captions, then the pending (not yet translated) text.
+        var text = transcript.shownLines.map { "\($0.translation ?? $0.interimTranslation ?? "")\n  \($0.source)" }.joined(separator: "\n")
+        if !transcript.pendingText.isEmpty {
+            text += "\n…  \(transcript.pendingText)"
         }
         try? text.write(toFile: path, atomically: true, encoding: .utf8)
     }

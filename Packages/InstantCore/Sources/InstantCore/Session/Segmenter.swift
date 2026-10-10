@@ -83,7 +83,21 @@ public struct Segmenter: Sendable, Equatable {
         let next = group[index].text
         let endsClause = Self.clauseEndings.contains { preceding.hasSuffix($0) }
             && !["ん", "い", "う", "っ"].contains(next) // さん, ない, よう, よっ… are inside words
-        return group[index].duration + (endsClause ? 0.25 : 0)
+        // Never inside a katakana or kanji word (アメ|リカ, 唐|辛子).
+        let insideWord = Self.wordScript(group[index - 1].text) != nil
+            && Self.wordScript(group[index - 1].text) == Self.wordScript(next)
+        return group[index].duration + (endsClause ? 0.25 : 0) - (insideWord ? 1 : 0)
+    }
+
+    private enum Script { case katakana, kanji }
+
+    private static func wordScript(_ text: String) -> Script? {
+        guard let scalar = text.unicodeScalars.first else { return nil }
+        switch scalar.value {
+        case 0x30A0...0x30FF, 0x31F0...0x31FF: return .katakana // includes ー
+        case 0x4E00...0x9FFF, 0x3400...0x4DBF: return .kanji
+        default: return nil
+        }
     }
 
     /// One token per character. Multi-character runs (volatile results carry a single time range

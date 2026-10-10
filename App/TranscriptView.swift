@@ -28,8 +28,14 @@ struct TranscriptView: View {
     let isListening: Bool
     let size: CaptionSize
 
+    @State private var position = ScrollPosition(edge: .top)
+    /// Whether to keep the newest line in view. Turned off only by the reader scrolling away from
+    /// the bottom, back on when they return to it (or tap "最新").
+    @State private var following = true
+    @State private var readerScrolling = false
+
     var body: some View {
-        if transcript.lines.isEmpty, transcript.volatile.isEmpty {
+        if transcript.lines.isEmpty, transcript.pendingText.isEmpty {
             ContentUnavailableView {
                 Label(isListening ? "聆聽中…" : "按「開始」", systemImage: "waveform")
                     .symbolEffect(.variableColor.iterative, isActive: isListening)
@@ -39,13 +45,13 @@ struct TranscriptView: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: size.translation * 0.9) {
-                    ForEach(transcript.lines) { line in
+                    // Only translated lines become captions, and they never change once shown.
+                    ForEach(transcript.shownLines) { line in
                         CaptionView(translation: line.translation ?? line.interimTranslation, original: line.source,
-                                    state: line.translation == nil ? .interim : line.isFinal ? .final : .provisional,
-                                    size: size)
+                                    state: line.translation == nil ? .interim : .final, size: size)
                     }
-                    if !transcript.volatile.isEmpty {
-                        CaptionView(translation: transcript.draftTranslation, original: transcript.volatile,
+                    if !transcript.pendingText.isEmpty {
+                        CaptionView(translation: transcript.draftTranslation, original: transcript.pendingText,
                                     state: .live, size: size)
                     }
                 }
@@ -54,10 +60,41 @@ struct TranscriptView: View {
                 .padding(.vertical, 20)
                 .textSelection(.enabled)
             }
-            // Start at the top while there's room; once full, stay pinned to the newest line.
+            // Start at the top while there's room; once full, keep the newest line in view.
             .defaultScrollAnchor(.top, for: .alignment)
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .scrollPosition($position)
             .scrollEdgeEffectStyle(.soft, for: .top)
+            .onScrollPhaseChange { _, phase in
+                readerScrolling = phase == .interacting || phase == .decelerating
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.visibleRect.maxY >= geometry.contentSize.height - 32
+            } action: { _, atBottom in
+                // Content growing also moves the bottom away; only the reader's own scrolling unfollows.
+                guard readerScrolling || atBottom, following != atBottom else { return }
+                following = atBottom
+                Trace.shared.event("ui.follow", ["following": atBottom])
+            }
+            .onChange(of: transcript) { old, new in
+                guard following else { return }
+                // Glide when a caption is added; snap while the live text grows, so nothing wobbles.
+                if new.shownLines.count != old.shownLines.count {
+                    withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+                } else {
+                    position.scrollTo(edge: .bottom)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !following {
+                    Button("最新", systemImage: "arrow.down") {
+                        following = true
+                        withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+                    }
+                    .buttonStyle(.glass)
+                    .padding(16)
+                    .transition(.opacity)
+                }
+            }
         }
     }
 }

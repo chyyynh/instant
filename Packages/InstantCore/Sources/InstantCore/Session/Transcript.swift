@@ -33,9 +33,11 @@ public struct Transcript: Sendable, Equatable {
     public var segmenter = Segmenter()
 
     private var finalCount = 0
-    /// Provisional segments locked in by `settleTail()` since the last final. Volatile results carry
-    /// no per-token timing, so without this the next volatile would merge them back into one line.
-    private var settled: [String] = []
+    /// Provisional lines that must not change any more, since the last final: lines already shown
+    /// (translated) and lines settled after a pause. Later recognizer results — revisions, and the
+    /// final with its own segmentation — only affect the text after them, so captions on screen
+    /// never get rewritten.
+    private var locked: [String] = []
     private var translations: [String: String] = [:]
     private var inFlight: Set<String> = []
 
@@ -45,23 +47,15 @@ public struct Transcript: Sendable, Equatable {
     public mutating func apply(_ event: TranscriptEvent) {
         switch event {
         case .volatile(let tokens):
-            var remainder = Segmenter.characters(tokens)
-            if !settled.isEmpty {
-                if let rest = Self.dropPrefix(settled.joined(), from: remainder) {
-                    remainder = rest
-                } else {
-                    settled = [] // the recognizer revised settled text; re-split everything
-                }
-            }
-            let (segments, tail) = segmenter.split(remainder, isFinal: false)
-            replaceProvisional(with: settled + segments, isFinal: false)
+            let (segments, tail) = segmenter.split(unlocked(tokens), isFinal: false)
+            replaceProvisional(with: locked + segments, isFinal: false)
             volatile = tail
             carryDraft()
         case .final(let tokens):
-            let (segments, _) = segmenter.split(tokens, isFinal: true)
-            replaceProvisional(with: segments, isFinal: true)
+            let (segments, _) = segmenter.split(unlocked(tokens), isFinal: true)
+            replaceProvisional(with: locked + segments, isFinal: true)
             finalCount = lines.count
-            settled = []
+            locked = []
             volatile = ""
             carryDraft()
         }
@@ -72,9 +66,59 @@ public struct Transcript: Sendable, Equatable {
     public mutating func settleTail() {
         guard !volatile.isEmpty else { return }
         lines.append(Line(id: lines.count, source: volatile, translation: translations[volatile], interimTranslation: nil, isFinal: false))
-        settled = lines.dropFirst(finalCount).map(\.source)
+        locked = lines.dropFirst(finalCount).map(\.source)
         volatile = ""
         carryDraft()
+    }
+
+    /// The tokens after the locked lines. If the recognizer revised locked text, the locked lines
+    /// still stand and the same number of characters is skipped, so the revision is never shown.
+    private func unlocked(_ tokens: [Token]) -> [Token] {
+        let characters = Segmenter.characters(tokens)
+        guard !locked.isEmpty else { return characters }
+        let prefix = locked.joined()
+        if let rest = Self.dropPrefix(prefix, from: characters) { return rest }
+        // The recognizer revised text under the locked captions. Revisions are usually earlier in
+        // the segment, so find where the locked text *ends* in the new hypothesis and continue
+        // after that; only if its ending can't be found, skip the same number of characters.
+        let (rest, method) = Self.dropThroughEnding(of: prefix, from: characters)
+            .map { ($0, "ending") } ?? (Self.drop(count: prefix.filter { !$0.isWhitespace }.count, from: characters), "count")
+        Trace.shared.event("seg.realign", [
+            "method": method,
+            "locked": prefix,
+            "revised": Segmenter.text(Array(characters.prefix(characters.count - rest.count))),
+        ])
+        return rest
+    }
+
+    /// The tokens after the occurrence of `prefix`'s last few characters nearest to where `prefix`
+    /// would end, or nil if no such occurrence exists.
+    static func dropThroughEnding(of prefix: String, from tokens: [Token]) -> [Token]? {
+        let target = Array(prefix.filter { !$0.isWhitespace })
+        // Non-whitespace characters of the new hypothesis, with their token indices.
+        let indexed = tokens.enumerated().compactMap { index, token -> (Character, Int)? in
+            guard let character = token.text.first, !token.text.allSatisfy(\.isWhitespace) else { return nil }
+            return (character, index)
+        }
+        let text = indexed.map(\.0)
+        for length in [8, 5, 3] where target.count >= length {
+            let ending = Array(target.suffix(length))
+            let matches = text.indices.dropLast(length - 1).filter { Array(text[$0..<$0 + length]) == ending }
+            guard let start = matches.min(by: { abs($0 + length - target.count) < abs($1 + length - target.count) })
+            else { continue }
+            return Array(tokens[(indexed[start + length - 1].1 + 1)...])
+        }
+        return nil
+    }
+
+    static func drop(count: Int, from tokens: [Token]) -> [Token] {
+        var remaining = count
+        var index = 0
+        while remaining > 0, index < tokens.count {
+            if !tokens[index].text.allSatisfy(\.isWhitespace) { remaining -= 1 }
+            index += 1
+        }
+        return Array(tokens[index...])
     }
 
     /// The tokens after `prefix`, ignoring whitespace (segments are trimmed), or nil if they don't start with it.
@@ -108,6 +152,22 @@ public struct Transcript: Sendable, Equatable {
         for index in lines.indices where lines[index].source == source {
             lines[index].translation = translation
         }
+        // A provisional line becomes visible once translated: lock it and everything before it.
+        if let index = lines.indices.last(where: { $0 >= finalCount && lines[$0].source == source }),
+           index - finalCount + 1 > locked.count {
+            locked = lines[finalCount...index].map(\.source)
+        }
+    }
+
+    /// Lines ready to show as captions: translated (or carrying a draft), in order.
+    public var shownLines: ArraySlice<Line> {
+        lines.prefix { $0.translation != nil || $0.interimTranslation != nil }
+    }
+
+    /// Recognized text not yet shown as a caption: segmented lines awaiting translation plus the
+    /// segment still being spoken.
+    public var pendingText: String {
+        (lines.dropFirst(shownLines.count).map(\.source) + [volatile]).joined()
     }
 
     /// Lets a failed line be requested again on the next event.
