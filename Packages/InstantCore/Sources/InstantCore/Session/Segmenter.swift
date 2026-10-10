@@ -5,14 +5,20 @@ public struct Token: Sendable, Equatable {
     public let text: String
     public let start: TimeInterval
     public let end: TimeInterval
+    /// False when the time range was spread evenly over a multi-character run, which says
+    /// nothing about pauses between its characters.
+    public let isTimed: Bool
 
-    public init(_ text: String, start: TimeInterval, end: TimeInterval) {
+    public init(_ text: String, start: TimeInterval, end: TimeInterval, isTimed: Bool = true) {
         self.text = text
         self.start = start
         self.end = end
+        self.isTimed = isTimed
     }
 
     var duration: TimeInterval { end - start }
+    /// Duration usable as pause evidence: zero for untimed tokens.
+    var pauseEvidence: TimeInterval { isTimed ? duration : 0 }
 }
 
 /// Splits recognized speech into readable segments.
@@ -39,7 +45,7 @@ public struct Segmenter: Sendable, Equatable {
         var groups: [[Token]] = []
         var current: [Token] = []
         for token in Self.characters(tokens) {
-            if token.duration > pauseThreshold, !current.isEmpty {
+            if token.pauseEvidence > pauseThreshold, !current.isEmpty {
                 groups.append(current)
                 current = []
             }
@@ -86,7 +92,7 @@ public struct Segmenter: Sendable, Equatable {
         // Never inside a katakana or kanji word (アメ|リカ, 唐|辛子).
         let insideWord = Self.wordScript(group[index - 1].text) != nil
             && Self.wordScript(group[index - 1].text) == Self.wordScript(next)
-        return group[index].duration + (endsClause ? 0.25 : 0) - (insideWord ? 1 : 0)
+        return group[index].pauseEvidence + (endsClause ? 0.25 : 0) - (insideWord ? 1 : 0)
     }
 
     private enum Script { case katakana, kanji }
@@ -107,10 +113,12 @@ public struct Segmenter: Sendable, Equatable {
         tokens.flatMap { token -> [Token] in
             let characters = Array(token.text)
             guard characters.count > 1 else { return [token] }
+            // Volatile results come as one run spanning everything since the last final (seen:
+            // 13 characters over 34s); spreading that would make every character look like a pause.
             let step = token.duration / Double(characters.count)
             return characters.enumerated().map { offset, character in
                 let start = token.start + step * Double(offset)
-                return Token(String(character), start: start, end: start + step)
+                return Token(String(character), start: start, end: start + step, isTimed: false)
             }
         }
     }

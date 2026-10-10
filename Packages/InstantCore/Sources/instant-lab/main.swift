@@ -112,7 +112,7 @@ func report(_ path: String) {
     asr results              \(results.count) (\(results.filter { $0["kind"] as? String == "final" }.count) final)
     asr lag behind audio     \(stats(results.compactMap { $0["lag"] as? Double }))
     asr update interval      \(stats(zip(results.dropFirst(), results).map { t($0) - t($1) }))
-    lines                    \(finalLines.count), length \(stats(lengths.map(Double.init), unit: " chars"))
+    lines                    \(finalLines.count), length \(stats(lengths.map(Double.init), unit: " chars")); \(lengths.filter { $0 <= 2 }.count) of 1–2 chars
     line → translation wait  \(stats(lineWait))
     mt requests              \(requests.count) for \(finalLines.count) lines; \(unused) for text that didn't survive, \(stale) stale on arrival
     mt time                  \(stats(responses.compactMap { ($0["ms"] as? Int).map { Double($0) / 1000 } }))

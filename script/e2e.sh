@@ -19,5 +19,7 @@ LAB=Packages/InstantCore/.build/out/Products/Debug/instant-lab
 run() { "$LAB" run "$@"; }
 case "${1:-all}" in
   podcast|all) run "$PODCAST" --start 150 --duration 90 --trace /tmp/instant-e2e-podcast.jsonl ;|
-  meeting|all) run "$SAMPLES/ja-meeting.aiff" --trace /tmp/instant-e2e-meeting.jsonl ;;
+  meeting|all) run "$SAMPLES/ja-meeting.aiff" --trace /tmp/instant-e2e-meeting.jsonl ;|
+  # Slow speech with long silences: volatile results then span long stretches with few characters.
+  slow|all) run "$SAMPLES/ja-slow.aiff" --trace /tmp/instant-e2e-slow.jsonl ;;
 esac
