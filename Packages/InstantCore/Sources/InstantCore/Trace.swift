@@ -42,7 +42,7 @@ public final class Trace: @unchecked Sendable {
             guard let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys, .withoutEscapingSlashes]),
                   let line = String(data: data, encoding: .utf8)
             else { return }
-            logger.debug("\(line, privacy: .public)")
+            logger.log("\(line, privacy: .public)")
             handle?.write(Data((line + "\n").utf8))
         }
     }

@@ -35,10 +35,11 @@ public final class SystemAudioSource: NSObject, AudioSource {
 
         let (chunks, continuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .bufferingNewest(64))
         let output = Output(continuation: continuation)
-        let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: configuration, delegate: nil)
+        let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: configuration, delegate: output)
         try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: output.queue)
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: output.queue)
         try await stream.startCapture()
+        Trace.shared.event("audio.start", ["source": "system", "display": Int(display.displayID)])
         self.stream = stream
         self.output = output
         return chunks
@@ -52,7 +53,7 @@ public final class SystemAudioSource: NSObject, AudioSource {
         output = nil
     }
 
-    private final class Output: NSObject, SCStreamOutput, @unchecked Sendable {
+    private final class Output: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
         let continuation: AsyncStream<AudioChunk>.Continuation
         let queue = DispatchQueue(label: "instant.system-audio")
 
@@ -60,24 +61,67 @@ public final class SystemAudioSource: NSObject, AudioSource {
             self.continuation = continuation
         }
 
+        // Counters for the once-a-second `audio.source` trace event (only touched on `queue`).
+        private var received = 0
+        private var failed = 0
+        private var lastFailure = ""
+        private var lastReport = Date.distantPast
+        private var reportedFormat = false
+
         func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-            guard type == .audio, let buffer = Self.pcmBuffer(from: sampleBuffer) else { return }
-            continuation.yield(AudioChunk(buffer))
+            guard type == .audio else { return }
+            received += 1
+            switch Self.pcmBuffer(from: sampleBuffer) {
+            case .success(let buffer):
+                if !reportedFormat {
+                    reportedFormat = true
+                    Trace.shared.event("audio.source", ["format": "\(buffer.format)", "frames": Int(buffer.frameLength)])
+                }
+                continuation.yield(AudioChunk(buffer))
+            case .failure(let reason):
+                failed += 1
+                lastFailure = reason.description
+            }
+            if Date().timeIntervalSince(lastReport) >= 1 {
+                lastReport = Date()
+                Trace.shared.event("audio.capture", ["received": received, "failed": failed, "lastFailure": lastFailure])
+            }
         }
 
-        private static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        func stream(_ stream: SCStream, didStopWithError error: any Error) {
+            Trace.shared.event("audio.error", ["error": "\(error)"])
+        }
+
+        /// Copies the sample buffer's audio into a buffer we own. `CMSampleBufferCopyPCMDataIntoAudioBufferList`
+        /// rejects ScreenCaptureKit's buffers (OSStatus -12731), so read the audio buffer list directly.
+        private static func pcmBuffer(from sampleBuffer: CMSampleBuffer) -> Result<AVAudioPCMBuffer, Failure> {
             let frames = CMSampleBufferGetNumSamples(sampleBuffer)
-            guard frames > 0,
-                  let description = CMSampleBufferGetFormatDescription(sampleBuffer),
-                  let buffer = AVAudioPCMBuffer(
-                      pcmFormat: AVAudioFormat(cmAudioFormatDescription: description),
-                      frameCapacity: AVAudioFrameCount(frames))
-            else { return nil }
-            let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
-                sampleBuffer, at: 0, frameCount: Int32(frames), into: buffer.mutableAudioBufferList)
-            guard status == noErr else { return nil }
-            buffer.frameLength = AVAudioFrameCount(frames)
-            return buffer
+            guard frames > 0 else { return .failure(Failure("empty sample buffer")) }
+            guard let description = CMSampleBufferGetFormatDescription(sampleBuffer) else { return .failure(Failure("no format description")) }
+            let format = AVAudioFormat(cmAudioFormatDescription: description)
+            guard let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else {
+                return .failure(Failure("cannot allocate buffer for \(format)"))
+            }
+            // Set the length first: a fresh buffer's mDataByteSize reflects frameLength (0), not capacity.
+            copy.frameLength = AVAudioFrameCount(frames)
+            do {
+                try sampleBuffer.withAudioBufferList { source, _ in
+                    let destination = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+                    for (from, to) in zip(source, destination) {
+                        guard let fromData = from.mData, let toData = to.mData else { continue }
+                        memcpy(toData, fromData, Int(min(from.mDataByteSize, to.mDataByteSize)))
+                    }
+                }
+            } catch {
+                return .failure(Failure("read audio buffer list failed: \(error), \(format)"))
+            }
+            return .success(copy)
+        }
+
+        struct Failure: Error, ExpressibleByStringLiteral, CustomStringConvertible {
+            let description: String
+            init(stringLiteral value: String) { description = value }
+            init(_ value: String) { description = value }
         }
     }
 }

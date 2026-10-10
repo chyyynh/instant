@@ -54,13 +54,18 @@ public final class LiveTranscriber {
         feedTask = Task.detached(priority: .userInitiated) {
             let converter = BufferConverter(outputFormat: analyzerFormat)
             var nextReport = 1.0
+            var peak: Float = 0
             for await chunk in audio {
                 if let buffer = converter.convert(chunk.buffer) {
                     inputContinuation.yield(AnalyzerInput(buffer: buffer))
+                    peak = max(peak, buffer.peakLevel)
                     let total = fed.add(Double(buffer.frameLength) / analyzerFormat.sampleRate)
                     if total >= nextReport {
-                        Trace.shared.event("audio.fed", ["audio": total.rounded(toPlaces: 2)])
+                        // Peak level over the last second in dBFS: near -100 means silence.
+                        let dB = 20 * log10(max(Double(peak), 1e-5))
+                        Trace.shared.event("audio.fed", ["audio": total.rounded(toPlaces: 2), "peak_db": dB.rounded(toPlaces: 1)])
                         nextReport = total.rounded(.down) + 1
+                        peak = 0
                     }
                 } else {
                     Trace.shared.event("audio.drop", ["frames": Int(chunk.buffer.frameLength), "format": "\(chunk.buffer.format)"])
@@ -187,5 +192,23 @@ extension Double {
     func rounded(toPlaces places: Int) -> Double {
         let factor = pow(10, Double(places))
         return (self * factor).rounded() / factor
+    }
+}
+
+extension AVAudioPCMBuffer {
+    /// Largest absolute sample value (0…1) for float or int16 PCM.
+    var peakLevel: Float {
+        let frames = Int(frameLength)
+        var peak: Float = 0
+        if let channels = floatChannelData {
+            for channel in 0..<Int(format.channelCount) {
+                for i in 0..<frames { peak = max(peak, abs(channels[channel][i])) }
+            }
+        } else if let channels = int16ChannelData {
+            for channel in 0..<Int(format.channelCount) {
+                for i in 0..<frames { peak = max(peak, abs(Float(channels[channel][i]) / Float(Int16.max))) }
+            }
+        }
+        return peak
     }
 }
