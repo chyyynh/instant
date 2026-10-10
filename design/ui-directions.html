@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Instant — UI directions</title>
+<style>
+  :root {
+    --bg: #1b1c1f;
+    --window: #232428;
+    --sidebar: #2a2b30;
+    --hair: rgba(255,255,255,.08);
+    --text: rgba(255,255,255,.92);
+    --text2: rgba(255,255,255,.58);
+    --text3: rgba(255,255,255,.34);
+    --accent: #0a84ff;
+    --live: #30d158;
+    --spk-a: #64d2ff;
+    --spk-b: #ffd60a;
+    --spk-c: #ff9f0a;
+    --glass: rgba(40,42,48,.55);
+    font-family: -apple-system, "SF Pro Text", "PingFang TC", "Hiragino Sans", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0f1012; color: var(--text); padding: 48px 56px 96px; }
+  h1 { font: 700 34px/1.2 -apple-system, "SF Pro Display", "PingFang TC"; margin: 0 0 6px; letter-spacing: -.01em; }
+  .lede { color: var(--text2); font-size: 16px; margin: 0 0 40px; max-width: 900px; line-height: 1.6; }
+  h2 { font: 600 22px/1.3 -apple-system, "PingFang TC"; margin: 56px 0 6px; }
+  h2 .tag { font-size: 13px; font-weight: 600; color: #0f1012; background: var(--live); border-radius: 6px; padding: 2px 8px; margin-left: 8px; vertical-align: 3px; }
+  .why { color: var(--text2); font-size: 14px; line-height: 1.65; margin: 0 0 20px; max-width: 980px; }
+  .row { display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap; }
+  .note { color: var(--text3); font-size: 12.5px; margin-top: 10px; line-height: 1.6; max-width: 560px; }
+
+  /* ---------- macOS window chrome ---------- */
+  .win { width: 620px; height: 720px; background: var(--window); border-radius: 14px; overflow: hidden;
+         box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 .5px rgba(255,255,255,.12); display: flex; flex-direction: column; position: relative; }
+  .win.wide { width: 860px; height: 470px; }
+  .titlebar { height: 52px; display: flex; align-items: center; padding: 0 14px; gap: 12px; flex: none; position: relative; z-index: 2; }
+  .lights { display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1){background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+  .title { display: flex; flex-direction: column; line-height: 1.15; margin-left: 6px; }
+  .title b { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+  .title b .chev { color: var(--text3); font-weight: 500; margin-left: 4px; font-size: 11px; }
+  .title span { font-size: 11px; color: var(--text2); display: flex; align-items: center; gap: 5px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--live); box-shadow: 0 0 6px var(--live); }
+  .spacer { flex: 1; }
+  .tb-group { display: flex; gap: 2px; background: rgba(255,255,255,.07); border-radius: 18px; padding: 3px; box-shadow: inset 0 0 0 .5px rgba(255,255,255,.1); }
+  .tb-btn { height: 30px; min-width: 30px; padding: 0 10px; border-radius: 15px; display: grid; place-items: center; font-size: 13px; color: var(--text2); }
+  .tb-btn.on { background: rgba(255,255,255,.14); color: var(--text); }
+  .tb-btn.stop { background: #ff453a; color: white; font-weight: 600; padding: 0 14px; }
+  .tb-btn.primary { background: var(--accent); color: white; font-weight: 600; padding: 0 14px; }
+  .glassbar { position: absolute; inset: 0 0 auto 0; height: 52px; background: linear-gradient(var(--window) 60%, rgba(35,36,40,0)); z-index: 1; }
+
+  /* ---------- A: Transcript ---------- */
+  .scroll { flex: 1; overflow: hidden; padding: 6px 28px 28px; display: flex; flex-direction: column; justify-content: flex-end; gap: 22px; }
+  .turn { display: grid; grid-template-columns: 28px 1fr; gap: 0 12px; }
+  .avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #111; margin-top: 2px; }
+  .who { font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 6px; display: flex; gap: 8px; align-items: baseline; }
+  .who time { color: var(--text3); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .seg { margin-bottom: 10px; }
+  .zh { font-size: 19px; line-height: 1.5; font-weight: 500; letter-spacing: .01em; }
+  .ja { font-size: 13.5px; line-height: 1.55; color: var(--text2); margin-top: 2px; font-family: "Hiragino Sans", -apple-system; }
+  .seg.prov .zh { color: rgba(255,255,255,.8); }
+  .seg.live .zh { color: var(--text3); }
+  .seg.live .ja { color: var(--text); }
+  .caret { display: inline-block; width: 2px; height: 1em; background: var(--live); vertical-align: -2px; margin-left: 2px; border-radius: 1px; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .shimmer { background: linear-gradient(90deg, var(--text3) 0%, rgba(255,255,255,.7) 45%, var(--text3) 60%); background-size: 200% 100%;
+             -webkit-background-clip: text; background-clip: text; color: transparent !important; animation: sh 2.4s linear infinite; }
+  @keyframes sh { from { background-position: 100% 0 } to { background-position: -100% 0 } }
+  .wave { display: inline-flex; gap: 2px; align-items: center; height: 12px; vertical-align: -1px; margin-right: 6px; }
+  .wave b { width: 2px; background: var(--live); border-radius: 1px; animation: wv 1s ease-in-out infinite; }
+  .wave b:nth-child(1){height:5px;animation-delay:-.2s}.wave b:nth-child(2){height:11px;animation-delay:-.5s}.wave b:nth-child(3){height:7px;animation-delay:-.8s}.wave b:nth-child(4){height:9px}
+  @keyframes wv { 50% { transform: scaleY(.4) } }
+  .bottombar { flex: none; height: 44px; border-top: .5px solid var(--hair); display: flex; align-items: center; padding: 0 16px; gap: 14px; font-size: 12px; color: var(--text2); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 12px; background: rgba(255,255,255,.07); }
+  .meter { width: 70px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 62%; background: var(--live); border-radius: 2px; }
+
+  /* ---------- B: Captions ---------- */
+  .stage { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 40px 40px; position: relative; }
+  .history { display: flex; flex-direction: column; gap: 16px; margin-bottom: 30px; mask-image: linear-gradient(transparent, black 70%); }
+  .history .zh { font-size: 17px; color: var(--text2); font-weight: 400; }
+  .history .ja { font-size: 12px; color: var(--text3); }
+  .current .zh { font-size: 34px; line-height: 1.38; font-weight: 600; letter-spacing: .005em; }
+  .current .ja { font-size: 17px; color: var(--text2); margin-top: 10px; line-height: 1.5; }
+  .current .spk { font-size: 13px; font-weight: 600; margin-bottom: 10px; display: flex; gap: 8px; align-items: center; }
+
+  /* ---------- C: Side by side ---------- */
+  .cols-head { display: grid; grid-template-columns: 1fr 1fr; padding: 4px 28px 10px; font-size: 11px; font-weight: 600; color: var(--text3); letter-spacing: .06em; text-transform: uppercase; border-bottom: .5px solid var(--hair); }
+  .cols { flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; padding: 12px 28px; border-bottom: .5px solid var(--hair); position: relative; }
+  .pair .ja { font-size: 15px; color: var(--text); margin: 0; }
+  .pair .zh { font-size: 15px; font-weight: 400; }
+  .pair .bar { position: absolute; left: 12px; top: 14px; bottom: 14px; width: 3px; border-radius: 2px; }
+  .pair.live { background: rgba(48,209,88,.06); }
+
+  /* ---------- Floating caption ---------- */
+  .desk { width: 860px; height: 420px; border-radius: 14px; overflow: hidden; position: relative;
+          background: radial-gradient(1200px 500px at 20% 0%, #2c3e66, #141821 60%), #141821; box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+  .video { position: absolute; inset: 40px 60px 70px; border-radius: 10px; background: linear-gradient(135deg,#3a3f4a,#20242c); display: grid; place-items: center; color: rgba(255,255,255,.25); font-size: 13px; }
+  .float { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); width: 640px; padding: 14px 22px 16px; border-radius: 22px;
+           background: rgba(20,22,26,.55); backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%);
+           box-shadow: 0 10px 40px rgba(0,0,0,.45), inset 0 0 0 .5px rgba(255,255,255,.18), inset 0 1px 0 rgba(255,255,255,.12); }
+  .float .zh { font-size: 24px; font-weight: 600; line-height: 1.4; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+  .float .ja { font-size: 14px; color: rgba(255,255,255,.7); }
+  .float .prev { font-size: 15px; color: rgba(255,255,255,.45); margin-bottom: 6px; }
+  .float .handle { position: absolute; top: 6px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: rgba(255,255,255,.18); }
+  .float.hover { opacity: .18; }
+
+  /* ---------- iPhone ---------- */
+  .phone { width: 300px; height: 640px; border-radius: 48px; background: #000; padding: 12px; box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1.5px #3a3a3c; flex: none; }
+  .screen { width: 100%; height: 100%; border-radius: 38px; background: #000; overflow: hidden; position: relative; display: flex; flex-direction: column; }
+  .island { width: 96px; height: 28px; border-radius: 14px; background: #000; position: absolute; top: 10px; left: 50%; margin-left: -48px; z-index: 5; box-shadow: 0 0 0 1px #111; }
+  .status { height: 50px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 6px 26px 0; font-size: 13px; font-weight: 600; }
+  .p-head { padding: 4px 18px 10px; display: flex; align-items: center; justify-content: space-between; }
+  .p-head .lang { font-size: 15px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+  .p-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 18px 12px; gap: 16px; }
+  .p-body .zh { font-size: 18px; }
+  .p-body .ja { font-size: 12.5px; }
+  .p-body .cur .zh { font-size: 26px; font-weight: 600; line-height: 1.35; }
+  .p-dock { flex: none; padding: 10px 18px 26px; display: flex; align-items: center; justify-content: space-between; }
+  .glass-pill { height: 44px; border-radius: 22px; padding: 0 16px; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600;
+                background: rgba(255,255,255,.12); backdrop-filter: blur(20px); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.2); }
+  .rec { width: 64px; height: 64px; border-radius: 32px; background: rgba(255,69,58,.18); display: grid; place-items: center; box-shadow: inset 0 0 0 .5px rgba(255,255,255,.2); }
+  .rec i { width: 22px; height: 22px; border-radius: 6px; background: #ff453a; display: block; }
+  .landscape { width: 640px; height: 300px; }
+  .landscape .screen { flex-direction: row; }
+  .land-cap { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 56px; }
+  .land-cap .zh { font-size: 34px; font-weight: 700; line-height: 1.3; }
+  .land-cap .ja { font-size: 16px; margin-top: 10px; }
+
+  .principles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 1180px; margin-top: 12px; }
+  .principles div { background: #17181b; border-radius: 12px; padding: 16px 18px; box-shadow: inset 0 0 0 .5px rgba(255,255,255,.07); font-size: 13.5px; line-height: 1.6; color: var(--text2); }
+  .principles b { color: var(--text); display: block; margin-bottom: 4px; font-size: 14px; }
+  .legend { display: flex; gap: 18px; font-size: 12.5px; color: var(--text2); margin: 4px 0 18px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+
+<h1>Instant · UI 設計方向</h1>
+<p class="lede">情境：在現場聽日本人說話，眼睛主要看中文，偶爾對照日文。參考了 Apple 翻譯（對話模式、大字）、Soniox（逐字串流、說話者標籤）、Mac 上的 Subtitles（置頂大字幕、滑過變透明）。以下三個主視窗方向擇一，浮動字幕和 iPhone 版會跟著選定的方向調整。全部使用系統字型、系統色與 Liquid Glass，深淺色模式都適用（此稿以深色呈現）。</p>
+
+<div class="principles">
+  <div><b>中文是主角</b>翻譯用大字、原文用小字灰色。眼睛先讀中文，需要時才往下對照日文。</div>
+  <div><b>「正在講」看得出來</b>還在變的那句有波形與游標，草稿翻譯用流光文字；講完才變成實心白字，讀者知道哪些已經定下來。</div>
+  <div><b>誰在說話</b>預留說話者顏色（A 藍、B 黃…），之後接上說話者辨識即可，可以改名成「田中」「佐藤」。</div>
+</div>
+
+<!-- ======================= A ======================= -->
+<h2>方向 A · 對話逐字稿<span class="tag">推薦</span></h2>
+<p class="why">像聊天紀錄一樣按說話者分段（Soniox 的做法）。最適合開會、上課：可以往回捲、看清楚誰說了什麼，最新的一句永遠在最下面。缺點是一次顯示的字較多，不適合遠遠瞄一眼。</p>
+<div class="legend">
+  <span><span class="dot"></span>聆聽中</span>
+  <span style="color:var(--text)">白字＝已確定</span>
+  <span style="color:rgba(255,255,255,.8)">淡白＝暫定（可能微調）</span>
+  <span class="shimmer" style="font-weight:600">流光＝草稿翻譯</span>
+</div>
+<div class="row">
+  <div class="win">
+    <div class="titlebar">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="title"><b>日文 → 中文（台灣）<span class="chev">⌄</span></b><span><span class="dot"></span>聆聽中 · 12:48</span></div>
+      <div class="spacer"></div>
+      <div class="tb-group"><div class="tb-btn">🎙</div><div class="tb-btn on">🔊</div></div>
+      <div class="tb-group"><div class="tb-btn">Aa</div><div class="tb-btn">▭</div></div>
+      <div class="tb-btn stop">■ 停止</div>
+    </div>
+    <div class="scroll">
+      <div class="turn">
+        <div class="avatar" style="background:var(--spk-a)">田</div>
+        <div>
+          <div class="who">田中 <time>12:46</time></div>
+          <div class="seg"><div class="zh">田中先生，關於昨天的事，你最後有聯絡對方嗎？</div><div class="ja">田中さん、昨日の件なんですけど、結局先方には連絡したんですか。</div></div>
+        </div>
+      </div>
+      <div class="turn">
+        <div class="avatar" style="background:var(--spk-b)">佐</div>
+        <div>
+          <div class="who">佐藤 <time>12:47</time></div>
+          <div class="seg"><div class="zh">不，還沒。最近有點手忙腳亂的。</div><div class="ja">いや、まだです。ちょっとバタバタしてて。</div></div>
+        </div>
+      </div>
+      <div class="turn">
+        <div class="avatar" style="background:var(--spk-a)">田</div>
+        <div>
+          <div class="who">田中 <time>12:47</time></div>
+          <div class="seg"><div class="zh">那今天之內可以拜託你嗎？</div><div class="ja">じゃあ今日中にお願いできますか。</div></div>
+          <div class="seg prov"><div class="zh">順帶一提，那個趕得上下週的發布嗎？</div><div class="ja">ちなみにあれって来週のリリースに間に合いそうですか</div></div>
+        </div>
+      </div>
+      <div class="turn">
+        <div class="avatar" style="background:var(--spk-b)">佐</div>
+        <div>
+          <div class="who"><span class="wave"><b></b><b></b><b></b><b></b></span>佐藤 正在說話</div>
+          <div class="seg live"><div class="zh shimmer">老實說可能有點難，測試還</div><div class="ja">正直厳しいかもしれないですね。テストがまだ<span class="caret"></span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="bottombar"><span class="chip">🔊 Mac 聲音</span><div class="meter"><i></i></div><div class="spacer"></div><span>裝置上處理 · 不上傳</span></div>
+  </div>
+  <div class="note">
+    · 標題就是語言選單（點標題切換），副標題顯示狀態與時長。<br>
+    · 工具列：音源（麥克風／Mac 聲音）、字級 Aa、開啟浮動字幕 ▭、停止。<br>
+    · 底部狀態列：目前音源、即時音量（確認「有收到聲音」，這次 bug 就是看不到這個）。<br>
+    · 說話者先以 A/B 色塊顯示，可點頭像改名。
+  </div>
+</div>
+
+<!-- ======================= B ======================= -->
+<h2>方向 B · 大字幕</h2>
+<p class="why">畫面只放「現在這一句」超大字，舊的往上淡出（Apple 翻譯對話模式＋電影字幕）。適合把 Mac 或 iPhone 放在桌上、距離一兩公尺瞄一眼。缺點是回頭看前文不方便（可捲動但不是重點）。</p>
+<div class="row">
+  <div class="win">
+    <div class="titlebar">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="title"><b>日文 → 中文（台灣）<span class="chev">⌄</span></b><span><span class="dot"></span>聆聽中</span></div>
+      <div class="spacer"></div>
+      <div class="tb-group"><div class="tb-btn">🎙</div><div class="tb-btn on">🔊</div></div>
+      <div class="tb-btn stop">■ 停止</div>
+    </div>
+    <div class="stage">
+      <div class="history">
+        <div><div class="zh">不，還沒。最近有點手忙腳亂的。</div><div class="ja">いや、まだです。ちょっとバタバタしてて。</div></div>
+        <div><div class="zh">那今天之內可以拜託你嗎？</div><div class="ja">じゃあ今日中にお願いできますか。</div></div>
+        <div><div class="zh">順帶一提，那個趕得上下週的發布嗎？</div><div class="ja">ちなみにあれって来週のリリースに間に合いそうですか</div></div>
+      </div>
+      <div class="current">
+        <div class="spk" style="color:var(--spk-b)"><span class="wave"><b></b><b></b><b></b><b></b></span>佐藤</div>
+        <div class="zh">老實說可能有點難，<span class="shimmer">測試還只做完一半</span></div>
+        <div class="ja">正直厳しいかもしれないですね。テストがまだ半分くらいしか<span class="caret"></span></div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    · 目前這句 34pt，可用 Aa 調大；長句自動換行，最多三行，超過就捲動。<br>
+    · 已確定的部分實心、草稿部分流光，同一句裡就看得出「哪裡還會變」。<br>
+    · 這個版面也直接用在 iPhone 橫放（下方）。
+  </div>
+</div>
+
+<!-- ======================= C ======================= -->
+<h2>方向 C · 左右對照</h2>
+<p class="why">日文在左、中文在右，一句一列對齊。適合學日文或需要精確核對（例如會議記錄、訪談）。缺點是視窗要寬、字不能太大，在現場瞄一眼最吃力。</p>
+<div class="row">
+  <div class="win wide">
+    <div class="titlebar">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="title"><b>日文 → 中文（台灣）<span class="chev">⌄</span></b><span><span class="dot"></span>聆聽中</span></div>
+      <div class="spacer"></div>
+      <div class="tb-group"><div class="tb-btn">🎙</div><div class="tb-btn on">🔊</div></div>
+      <div class="tb-btn stop">■ 停止</div>
+    </div>
+    <div class="cols-head"><div>日本語</div><div>中文（台灣）</div></div>
+    <div class="cols">
+      <div class="pair"><i class="bar" style="background:var(--spk-a)"></i><div class="ja">田中さん、昨日の件なんですけど、結局先方には連絡したんですか。</div><div class="zh">田中先生，關於昨天的事，你最後有聯絡對方嗎？</div></div>
+      <div class="pair"><i class="bar" style="background:var(--spk-b)"></i><div class="ja">いや、まだです。ちょっとバタバタしてて。</div><div class="zh">不，還沒。最近有點手忙腳亂的。</div></div>
+      <div class="pair"><i class="bar" style="background:var(--spk-a)"></i><div class="ja">じゃあ今日中にお願いできますか。</div><div class="zh">那今天之內可以拜託你嗎？</div></div>
+      <div class="pair"><i class="bar" style="background:var(--spk-a)"></i><div class="ja">ちなみにあれって来週のリリースに間に合いそうですか</div><div class="zh" style="color:rgba(255,255,255,.8)">順帶一提，那個趕得上下週的發布嗎？</div></div>
+      <div class="pair live"><i class="bar" style="background:var(--spk-b)"></i><div class="ja">正直厳しいかもしれないですね。テストがまだ<span class="caret"></span></div><div class="zh shimmer">老實說可能有點難，測試還</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= Floating ======================= -->
+<h2>浮動字幕（Mac，三個方向共用）</h2>
+<p class="why">看影片、開線上會議時用：Liquid Glass 半透明條，永遠置頂、可拖曳、可調寬度；只顯示上一句（淡）＋目前這句。滑鼠移上去會變透明（右圖），不擋住底下的內容。</p>
+<div class="row">
+  <div class="desk">
+    <div class="video">YouTube · ゆる言語学ラジオ</div>
+    <div class="float">
+      <div class="handle"></div>
+      <div class="prev">正確答案是哥倫布把美洲大陸誤認成印度。</div>
+      <div class="zh">胡椒原產於印度，<span class="shimmer">辣椒則原產於中南美</span></div>
+      <div class="ja">コショウはインド原産であり、唐辛子は中南米原産で<span class="caret"></span></div>
+    </div>
+  </div>
+  <div class="desk" style="width:420px">
+    <div class="video" style="inset:30px 30px 60px">滑鼠移到字幕上</div>
+    <div class="float hover" style="width:360px"><div class="zh" style="font-size:18px">胡椒原產於印度……</div><div class="ja">コショウはインド原産で…</div></div>
+  </div>
+</div>
+
+<!-- ======================= iPhone ======================= -->
+<h2>iPhone</h2>
+<p class="why">直拿＝方向 A 的精簡版，底部一顆大的停止鍵（單手可按）；橫放＝方向 B 的大字幕，放在桌上給自己看。語言切換在左上，音源固定是麥克風。</p>
+<div class="row">
+  <div class="phone"><div class="screen">
+    <div class="island"></div>
+    <div class="status"><span>12:48</span><span style="font-size:11px;letter-spacing:.04em">5G ▮▮▮</span></div>
+    <div class="p-head"><div class="lang">日文 → 中文 <span style="color:var(--text3);font-size:12px">⌄</span></div><div style="font-size:13px;color:var(--text2);display:flex;gap:6px;align-items:center"><span class="dot"></span>02:14</div></div>
+    <div class="p-body">
+      <div><div class="zh">不，還沒。最近有點手忙腳亂的。</div><div class="ja">いや、まだです。ちょっとバタバタしてて。</div></div>
+      <div><div class="zh">那今天之內可以拜託你嗎？</div><div class="ja">じゃあ今日中にお願いできますか。</div></div>
+      <div class="cur"><div class="who" style="color:var(--spk-b);font-size:12px;font-weight:600;margin-bottom:6px"><span class="wave"><b></b><b></b><b></b><b></b></span>佐藤</div><div class="zh">老實說可能有點難，<span class="shimmer">測試還</span></div><div class="ja">正直厳しいかもしれないですね。テストがまだ<span class="caret"></span></div></div>
+    </div>
+    <div class="p-dock"><div class="glass-pill">Aa</div><div class="rec"><i></i></div><div class="glass-pill">⋯</div></div>
+  </div></div>
+  <div class="phone landscape"><div class="screen">
+    <div class="land-cap">
+      <div class="who" style="color:var(--spk-b);font-size:13px;font-weight:600;margin-bottom:10px"><span class="wave"><b></b><b></b><b></b><b></b></span>佐藤</div>
+      <div class="zh">老實說可能有點難，<span class="shimmer">測試還只做完一半</span></div>
+      <div class="ja">正直厳しいかもしれないですね。テストがまだ半分<span class="caret"></span></div>
+    </div>
+  </div></div>
+</div>
+
+</body>
+</html>

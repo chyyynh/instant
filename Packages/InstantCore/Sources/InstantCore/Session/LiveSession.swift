@@ -50,18 +50,18 @@ public final class LiveSession {
 
     /// How many earlier lines are passed to context-aware translators.
     public var contextLimit = 6
-    /// Also translate the segment still being spoken, re-translating as it grows. Off by default:
-    /// half a Japanese sentence (negation and questions come last) often translates misleadingly,
-    /// and it multiplies translation calls (~50 drafts vs ~5 lines per minute of podcast).
-    public var draftTranslationsEnabled = false
+    /// Also translate the segment still being spoken, re-translating as it grows, so Chinese
+    /// follows the Japanese live instead of waiting for the segment to end. Cheap with the
+    /// on-device Apple translator (~50ms, free); a future LLM translator should only do lines.
+    public var draftTranslationsEnabled = true
     /// Minimum spacing between draft translations of in-progress speech.
-    public var draftInterval: Duration = .milliseconds(800)
+    public var draftInterval: Duration = .milliseconds(500)
     /// With no new recognition for this long, the in-progress segment is treated as complete.
     /// Longer than the recognizer's ~1s update cadence so ongoing speech isn't cut.
     public var settleDelay: Duration = .milliseconds(1500)
     /// A provisional line is translated only after its text has stayed the same this long; the
     /// recognizer often revises the last second or two. Final lines are translated immediately.
-    public var stableDelay: Duration = .milliseconds(800)
+    public var stableDelay: Duration = .milliseconds(400)
 
     private var audioSource: AudioSource?
     private var transcriber: LiveTranscriber?
@@ -233,8 +233,16 @@ public final class LiveSession {
             if snapshot != lastDrafted {
                 lastDrafted = snapshot
                 let context = transcript.lines.last.map { transcript.context(before: $0.id + 1, limit: contextLimit) } ?? []
+                let requested = Trace.shared.elapsed
                 if let draft = try? await translator.translate(snapshot, context: context) {
                     transcript.setDraftTranslation(draft)
+                    Trace.shared.event("mt.draft", [
+                        "source": snapshot,
+                        "translation": draft,
+                        "ms": Int((Trace.shared.elapsed - requested) * 1000),
+                        // The in-progress text moved on while translating.
+                        "stale": transcript.volatile != snapshot,
+                    ])
                 }
             }
             try? await Task.sleep(for: draftInterval)

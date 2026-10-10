@@ -77,6 +77,7 @@ func report(_ path: String) {
     let requests = stage("mt.request")
     let responses = stage("mt.response")
     let segs = stage("seg.update")
+    let drafts = stage("mt.draft")
     let finalLines = (events.last { $0["lines"] != nil }?["lines"] as? [[String: Any]]) ?? []
     let finalSources = Set(finalLines.compactMap { $0["source"] as? String })
 
@@ -115,6 +116,8 @@ func report(_ path: String) {
     line → translation wait  \(stats(lineWait))
     mt requests              \(requests.count) for \(finalLines.count) lines; \(unused) for text that didn't survive, \(stale) stale on arrival
     mt time                  \(stats(responses.compactMap { ($0["ms"] as? Int).map { Double($0) / 1000 } }))
+    draft translations       \(drafts.count) (\(drafts.filter { $0["stale"] as? Bool == true }.count) stale), \(stats(drafts.compactMap { ($0["ms"] as? Int).map { Double($0) / 1000 } }))
+    chinese for live text    \(stats(zip(drafts.dropFirst(), drafts).map { t($0) - t($1) })) between draft updates
     errors                   \(events.filter { ($0["stage"] as? String)?.hasSuffix(".error") == true }.count)
     ───────────────────────────────────────────────────────
     """)
