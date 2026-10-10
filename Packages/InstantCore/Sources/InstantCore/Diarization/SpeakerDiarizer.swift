@@ -128,6 +128,9 @@ public final class SpeakerDiarizer: @unchecked Sendable {
         return tentative[(frame - finalizedFrames) * numSpeakers + speaker]
     }
 
+    /// Speakers with probability over 0.5 in the most recent frame.
+    public var speakingNow: [Int] { activeSpeakers }
+
     /// Speakers with probability over 0.5 in the most recent frame, for tracing.
     private var activeSpeakers: [Int] {
         lock.withLock {

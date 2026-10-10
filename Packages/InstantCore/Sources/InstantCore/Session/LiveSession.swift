@@ -68,6 +68,12 @@ public final class LiveSession {
     public private(set) var speakerOrder: [Int] = []
     /// How long a finished line may wait for diarization to reach it before showing without a speaker.
     public var speakerWait: Duration = .milliseconds(1200)
+    /// Download progress (0…1) of the speaker model while it's downloading (first use only); nil otherwise.
+    public private(set) var speakerModelDownload: Double?
+    /// Approximate download size of the speaker model, for progress text.
+    public static let speakerModelMegabytes = 240
+    /// When the running session started listening; nil when not running.
+    public private(set) var startedAt: Date?
 
     /// How many earlier lines are passed to context-aware translators.
     public var contextLimit = 6
@@ -102,6 +108,9 @@ public final class LiveSession {
     /// translation round-trips went from ~70ms to ~1.3s without it.
     private var activity: NSObjectProtocol?
     private var downloadContinuation: CheckedContinuation<Void, Never>?
+    /// Resumed with the loaded diarizer, or nil when skipped or cancelled.
+    private var speakerLoadContinuation: CheckedContinuation<SpeakerDiarizer?, Never>?
+    private var startCancelled = false
 
     public init(sourceLocale: Locale = Locale(identifier: "ja-JP"),
                 targetLanguage: Locale.Language = Locale.Language(identifier: "zh-Hant-TW")) {
@@ -114,6 +123,7 @@ public final class LiveSession {
         guard !status.isActive else { return }
         diarizer = nil
         speakerOrder = []
+        startCancelled = false
         Trace.shared.begin()
         Trace.shared.event("session.start", [
             "source": sourceLocale.identifier(.bcp47),
@@ -125,22 +135,15 @@ public final class LiveSession {
             status = .preparing("準備翻譯…")
             translator = try await makeTranslator()
 
+            try checkCancelled()
+
             if speakerDiarizationEnabled {
                 status = .preparing("準備說話者辨識…")
-                do {
-                    diarizer = try await SpeakerDiarizer.load { fraction in
-                        // Only reported while downloading (first use, ~240 MB).
-                        Task { @MainActor [weak self] in
-                            guard let self, fraction < 1, status != .running else { return }
-                            status = .preparing("下載說話者辨識模型 \(Int(fraction * 100))%（只有第一次）")
-                        }
-                    }
-                } catch {
-                    // Captions still work without speakers.
-                    Trace.shared.event("spk.error", ["error": "\(error)", "stage": "load"])
-                }
+                diarizer = await loadDiarizer()
+                speakerModelDownload = nil
             }
 
+            try checkCancelled()
             status = .preparing("開啟音訊…")
             let source = override ?? makeAudioSource()
             audioSource = source
@@ -167,8 +170,10 @@ public final class LiveSession {
             let transcriber = LiveTranscriber(locale: sourceLocale)
             self.transcriber = transcriber
             let events = try await transcriber.start(audio: chunks)
+            try checkCancelled()
 
             status = .running
+            startedAt = .now
             activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .latencyCritical, .idleSystemSleepDisabled],
                 reason: "Live captions and translation")
@@ -183,8 +188,67 @@ public final class LiveSession {
             }
         } catch {
             await teardown()
-            status = .failed(error.localizedDescription)
+            status = error is CancellationError ? .idle : .failed(error.localizedDescription)
         }
+    }
+
+    /// Loads the speaker model; returns early with nil if the user skips speakers for this
+    /// session (the download keeps going in the background, so it's ready next time).
+    private func loadDiarizer() async -> SpeakerDiarizer? {
+        await withCheckedContinuation { continuation in
+            speakerLoadContinuation = continuation
+            Task {
+                let loaded: SpeakerDiarizer?
+                do {
+                    loaded = try await SpeakerDiarizer.load { fraction in
+                        // Only reported while downloading (first use, ~240 MB).
+                        Task { @MainActor [self] in
+                            guard fraction < 1, speakerLoadContinuation != nil else { return }
+                            speakerModelDownload = fraction
+                            status = .preparing("下載說話者辨識模型 \(Int(fraction * 100))%（只有第一次）")
+                        }
+                    }
+                } catch {
+                    // Captions still work without speakers.
+                    Trace.shared.event("spk.error", ["error": "\(error)", "stage": "load"])
+                    loaded = nil
+                }
+                finishSpeakerLoad(loaded)
+            }
+        }
+    }
+
+    private func finishSpeakerLoad(_ diarizer: SpeakerDiarizer?) {
+        speakerLoadContinuation?.resume(returning: diarizer)
+        speakerLoadContinuation = nil
+    }
+
+    /// Starts this session without telling speakers apart, instead of waiting for the speaker
+    /// model to download. `speakerDiarizationEnabled` is unchanged, so the next session uses it.
+    public func skipSpeakerDiarization() {
+        guard speakerLoadContinuation != nil else { return }
+        Trace.shared.event("spk.skip", ["download": speakerModelDownload ?? -1])
+        speakerModelDownload = nil
+        finishSpeakerLoad(nil)
+    }
+
+    /// Abandons a start that's still preparing (e.g. downloading the speaker model).
+    public func cancelStart() {
+        guard case .preparing = status else { return }
+        startCancelled = true
+        speakerModelDownload = nil
+        finishSpeakerLoad(nil)
+        translationDownloadFinished()
+    }
+
+    private func checkCancelled() throws {
+        if startCancelled { throw CancellationError() }
+    }
+
+    /// Speaker slots heard in the latest audio, for a "speaking now" indicator. Not observed:
+    /// poll it (it changes every 80ms).
+    public var speakingNow: [Int] {
+        status == .running ? diarizer?.speakingNow ?? [] : []
     }
 
     /// Stops capture; already-heard speech is still recognized and translated.
@@ -451,6 +515,7 @@ public final class LiveSession {
         speakerWaitStarted = [:]
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
+        startedAt = nil
         await transcriber?.cancel()
         transcriber = nil
         eventsTask = nil
@@ -481,6 +546,7 @@ public final class LiveSession {
                 translationDownload = .init(source: source, target: targetLanguage)
             }
             translationDownload = nil
+            try checkCancelled()
             guard await AppleTranslator.status(from: source, to: targetLanguage) == .installed else {
                 throw SessionError.translationNotInstalled
             }
