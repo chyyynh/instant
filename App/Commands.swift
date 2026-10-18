@@ -7,6 +7,7 @@ import SwiftUI
 struct InstantCommands: Commands {
     let session: LiveSession
     let ui: AppUI
+    let assistant: Assistant
     @AppStorage(Pref.captionPoints) private var captionPoints = CaptionMetrics.standard
     @AppStorage(Pref.showOriginal) private var showOriginal = true
 
@@ -20,7 +21,7 @@ struct InstantCommands: Commands {
                 }
             }
             .keyboardShortcut(.space, modifiers: [])
-            .disabled(ui.renamingSpeaker != nil) // Space belongs to the name field then
+            .disabled(ui.renamingSpeaker != nil || ui.composerFocused) // Space belongs to the text field then
             Divider()
             Toggle("麥克風", isOn: input(.microphone))
                 .keyboardShortcut("1")
@@ -52,8 +53,12 @@ struct InstantCommands: Commands {
                 .keyboardShortcut("o", modifiers: [.command, .option])
             Toggle("浮動字幕", isOn: Binding(get: { ui.overlayShown }, set: { ui.overlayShown = $0 }))
                 .keyboardShortcut("f", modifiers: [.command, .option])
-            Toggle("說話者檢閱器", isOn: Binding(get: { ui.inspectorShown }, set: { ui.inspectorShown = $0 }))
+            Toggle("說話者", isOn: Binding(get: { ui.speakersShown }, set: { ui.speakersShown = $0 }))
                 .keyboardShortcut("i", modifiers: [.command, .option])
+            Toggle("和 Claude 討論", isOn: Binding(get: { ui.inspectorShown }, set: { ui.inspectorShown = $0 }))
+                .keyboardShortcut("a", modifiers: [.command, .option])
+            Button("新的 Claude 對話") { assistant.reset() }
+                .disabled(assistant.messages.isEmpty)
             Divider()
         }
     }

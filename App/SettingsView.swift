@@ -15,6 +15,9 @@ struct SettingsView: View {
             Tab("說話者", systemImage: "person.2") {
                 Form { SpeakerSettings() }.formStyle(.grouped)
             }
+            Tab("AI", systemImage: "sparkles") {
+                Form { AssistantSettings() }.formStyle(.grouped)
+            }
         }
         .scenePadding()
         .frame(width: 500, height: 420)
@@ -56,6 +59,7 @@ struct SettingsSheet: View {
                 Section("語言") { LanguagePickers(session: session) }
                 CaptionSettings()
                 SpeakerSettings()
+                AssistantSettings()
             }
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)

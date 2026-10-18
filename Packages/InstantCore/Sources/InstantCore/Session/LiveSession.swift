@@ -287,7 +287,10 @@ public final class LiveSession {
     public func showDemoState(captions demo: [(speaker: Int, source: String, translation: String)],
                               pending: String, draft: String?, elapsed: TimeInterval) {
         captions = demo.enumerated().map { index, line in
-            Line(id: index, source: line.source, translation: line.translation, isFinal: true, speaker: line.speaker)
+            var caption = Line(id: index, source: line.source, translation: line.translation, isFinal: true, speaker: line.speaker)
+            // Spread over the elapsed time, leaving the last stretch for the pending line.
+            caption.start = elapsed * 0.9 * Double(index) / Double(demo.count)
+            return caption
         }
         speakerOrder = demo.map(\.speaker).reduce(into: []) { order, slot in if !order.contains(slot) { order.append(slot) } }
         pendingText = pending

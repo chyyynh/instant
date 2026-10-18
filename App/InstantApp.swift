@@ -6,6 +6,7 @@ struct InstantApp: App {
     /// One session for every window: the main window, the floating captions, the menu bar.
     @State private var session: LiveSession
     @State private var ui: AppUI
+    @State private var assistant = Assistant()
     #if os(macOS)
     @AppStorage(Pref.showMenuBarExtra) private var showMenuBarExtra = true
     #endif
@@ -27,10 +28,11 @@ struct InstantApp: App {
             ContentView()
                 .environment(session)
                 .environment(ui)
+                .environment(assistant)
         }
         .defaultSize(width: 560, height: 720)
         .defaultLaunchBehavior(.presented)
-        .commands { InstantCommands(session: session, ui: ui) }
+        .commands { InstantCommands(session: session, ui: ui, assistant: assistant) }
 
         MenuBarExtra(isInserted: $showMenuBarExtra) {
             MenuBarContent()
@@ -45,12 +47,14 @@ struct InstantApp: App {
         Settings {
             SettingsView()
                 .environment(session)
+                .environment(ui)
         }
         #else
         WindowGroup {
             ContentView()
                 .environment(session)
                 .environment(ui)
+                .environment(assistant)
         }
         #endif
     }

@@ -5,6 +5,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(LiveSession.self) private var session
     @Environment(AppUI.self) private var ui
+    @Environment(Assistant.self) private var assistant
     @AppStorage(Pref.captionPoints) private var captionPoints = CaptionMetrics.standard
     @AppStorage(Pref.showOriginal) private var showOriginal = true
     /// Ticks every second while listening, so the elapsed time in the subtitle advances (the
@@ -48,11 +49,19 @@ struct ContentView: View {
         }
         #if os(macOS)
         .inspector(isPresented: $ui.inspectorShown) {
-            SpeakerInspector()
-                .inspectorColumnWidth(min: 240, ideal: 270, max: 360)
+            AssistantView()
+                .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
+                .toolbar {
+                    ToolbarItem {
+                        Button("新對話", systemImage: "square.and.pencil") { assistant.reset() }
+                            .help("清掉這段討論，重新開始")
+                            .disabled(assistant.messages.isEmpty)
+                    }
+                }
         }
         #else
         .sheet(isPresented: $settingsShown) { SettingsSheet() }
+        .sheet(isPresented: $ui.assistantShown) { AssistantSheet() }
         #endif
         .renameSpeakerAlert()
         .animation(.smooth(duration: 0.3), value: session.status.isActive)
@@ -70,9 +79,9 @@ struct ContentView: View {
         #if DEBUG
         .task {
             #if os(macOS)
-            await DevAutomation.run(session: session, ui: ui, openSettings: { openSettings() })
+            await DevAutomation.run(session: session, ui: ui, assistant: assistant, openSettings: { openSettings() })
             #else
-            await DevAutomation.run(session: session, ui: ui, openSettings: { settingsShown = true })
+            await DevAutomation.run(session: session, ui: ui, assistant: assistant, openSettings: { settingsShown = true })
             #endif
         }
         #endif
@@ -144,24 +153,33 @@ struct ContentView: View {
     private var toolbar: some ToolbarContent {
         #if os(macOS)
         ToolbarItemGroup {
-            Toggle("區分說話者", systemImage: "person.2", isOn: session.speakersEnabledBinding)
-                .toggleStyle(.button)
-                .help("用聲音分辨不同說話者（第一次使用會下載約 \(LiveSession.speakerModelMegabytes) MB 的模型）")
-                .disabled(session.status.isActive)
+            Button("說話者", systemImage: session.speakerDiarizationEnabled ? "person.2" : "person.2.slash") {
+                ui.speakersShown.toggle()
+            }
+            .help("說話者清單，以及是否用聲音區分說話者")
+            .popover(isPresented: Bindable(ui).speakersShown, arrowEdge: .bottom) {
+                SpeakerInspector()
+                    .frame(width: 300, height: 380)
+            }
             if LiveSession.Input.available.count > 1 {
                 InputMenu()
             }
-            Toggle("說話者", systemImage: "sidebar.trailing", isOn: Bindable(ui).inspectorShown)
-                .toggleStyle(.button)
-                .help("顯示說話者清單")
             Toggle("浮動字幕", systemImage: "pip", isOn: Bindable(ui).overlayShown)
                 .toggleStyle(.button)
                 .help("在所有視窗上方顯示字幕")
+        }
+        ToolbarItem {
+            Toggle("和 Claude 討論", systemImage: "sparkles", isOn: Bindable(ui).inspectorShown)
+                .toggleStyle(.button)
+                .help("邊聽邊問 Claude 關於這段對話")
         }
         if let transport = TransportButton.Kind(session: session, idleShowsButton: !session.captions.isEmpty) {
             ToolbarItem(placement: .primaryAction) { TransportButton(kind: transport) }
         }
         #else
+        ToolbarItem(placement: .topBarTrailing) {
+            Button("和 Claude 討論", systemImage: "sparkles") { ui.assistantShown = true }
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Button("設定", systemImage: "gearshape") { settingsShown = true }
         }

@@ -6,6 +6,7 @@ import SwiftUI
 struct TranscriptView: View {
     @Environment(LiveSession.self) private var session
     @Environment(AppUI.self) private var ui
+    @Environment(Assistant.self) private var assistant
     /// Translation size in points (already scaled for Dynamic Type on iOS).
     let points: Double
     let showOriginal: Bool
@@ -15,12 +16,15 @@ struct TranscriptView: View {
     /// the bottom, back on when they return to it (or tap "最新").
     @State private var following = true
     @State private var readerScrolling = false
+    /// Caption shown from the Claude panel, highlighted for a moment.
+    @State private var highlighted: Int?
 
     /// Captions further back than this are dimmed, so the eye lands on the newest ones.
     private static let recentCount = 3
 
     var body: some View {
         let captions = session.captions
+        let asked = askedAt
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 // Captions never change once shown, so equal rows skip re-rendering. Caption ids
@@ -29,9 +33,17 @@ struct TranscriptView: View {
                     let line = captions[index]
                     let newSpeaker = line.speaker != nil && (index == 0 || captions[index - 1].speaker != line.speaker)
                     CaptionRow(translation: line.translation ?? "", original: showOriginal ? line.source : nil, points: points,
-                               speaker: newSpeaker ? line.speaker.map { CaptionRow.Speaker(name: session.displayName(of: $0), color: session.speakerColor($0)) } : nil)
+                               speaker: newSpeaker ? line.speaker.map { CaptionRow.Speaker(name: session.displayName(of: $0), color: session.speakerColor($0)) } : nil,
+                               asked: asked[index])
                         .equatable()
-                        .opacity(index < captions.count - Self.recentCount ? 0.55 : 1)
+                        .opacity(index < captions.count - Self.recentCount && highlighted != index ? 0.55 : 1)
+                        .background {
+                            if highlighted == index {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(.tint.opacity(0.15))
+                                    .padding(-8)
+                            }
+                        }
                         .contextMenu {
                             if let speaker = line.speaker {
                                 Button("重新命名「\(session.displayName(of: speaker))」…", systemImage: "pencil") {
@@ -48,6 +60,7 @@ struct TranscriptView: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 20)
             .textSelection(.enabled)
+            .scrollTargetLayout()
         }
         // Start at the top while there's room; once full, keep the newest line in view.
         .defaultScrollAnchor(.top, for: .alignment)
@@ -72,6 +85,17 @@ struct TranscriptView: View {
         .onChange(of: points) {
             if following { position.scrollTo(edge: .bottom) }
         }
+        .onChange(of: ui.revealedCaption) {
+            guard let index = ui.revealedCaption, captions.indices.contains(index) else { return }
+            ui.revealedCaption = nil
+            following = false
+            withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: index, anchor: .center) }
+            highlighted = index
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                withAnimation { if highlighted == index { highlighted = nil } }
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if !following {
                 Button("最新", systemImage: "arrow.down") { scrollToNewest() }
@@ -81,6 +105,15 @@ struct TranscriptView: View {
                     .transition(.opacity)
             }
         }
+    }
+
+    /// The questions asked to Claude, by the last caption it had seen then.
+    private var askedAt: [Int: String] {
+        var asked: [Int: String] = [:]
+        for message in assistant.messages where message.role == .user && message.captionCount > 0 {
+            asked[message.captionCount - 1, default: ""] += asked[message.captionCount - 1] == nil ? message.text : "、\(message.text)"
+        }
+        return asked
     }
 
     private func scrollToNewest() {
@@ -109,6 +142,8 @@ private struct CaptionRow: View, Equatable {
     let original: String?
     let points: Double
     let speaker: Speaker?
+    /// Questions asked to Claude right after this caption.
+    let asked: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -123,6 +158,13 @@ private struct CaptionRow: View, Equatable {
                 Text(original)
                     .font(CaptionMetrics.originalFont(points))
                     .foregroundStyle(.secondary)
+            }
+            if let asked {
+                Label("在這裡問了 Claude：\(asked)", systemImage: "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(.tint)
+                    .lineLimit(1)
+                    .padding(.top, 2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

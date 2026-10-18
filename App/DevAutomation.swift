@@ -22,18 +22,19 @@ import ScreenCaptureKit
 /// - INSTANT_SKIP_SPEAKERS_AT=<s> presses "這次先不分辨說話者" that long after launch.
 /// - Mac: INSTANT_SNAPSHOT=<prefix> with INSTANT_SNAPSHOT_AT=<s,s,…> captures the main window, plus
 ///   the floating captions (-overlay), Settings (-settings) and the menu bar window (-menubar) when
-///   open, and writes the transcript as .txt. INSTANT_INSPECTOR=1, INSTANT_OVERLAY=1 and
+///   open, and writes the transcript as .txt. INSTANT_INSPECTOR=1 (the Claude panel; INSTANT_ASSISTANT=1 also fills it with a canned chat under INSTANT_DEMO_UI; INSTANT_REVEAL=n then shows caption n as if its time were clicked), INSTANT_SPEAKERS=1 (the speaker popover), INSTANT_OVERLAY=1 and
 ///   INSTANT_SETTINGS=1 open those first; INSTANT_MENUBAR=1 shows the menu bar window's content in a
 ///   stand-in window. INSTANT_APPEARANCE=dark|light.
 enum DevAutomation {
     @MainActor
-    static func run(session: LiveSession, ui: AppUI, openSettings: @escaping @MainActor () -> Void) async {
+    static func run(session: LiveSession, ui: AppUI, assistant: Assistant, openSettings: @escaping @MainActor () -> Void) async {
         let env = ProcessInfo.processInfo.environment
         #if os(macOS)
         if let appearance = env["INSTANT_APPEARANCE"] {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
-        if env["INSTANT_INSPECTOR"] == "1" { ui.inspectorShown = true }
+        if env["INSTANT_INSPECTOR"] == "1" || env["INSTANT_ASSISTANT"] == "1" { ui.inspectorShown = true }
+        if env["INSTANT_SPEAKERS"] == "1" { ui.speakersShown = true }
         if env["INSTANT_OVERLAY"] == "1" { ui.overlayShown = true }
         if env["INSTANT_SETTINGS"] == "1" { openSettings() }
         if env["INSTANT_MENUBAR"] == "1" { openMenuBarPreview(session: session, ui: ui) }
@@ -69,6 +70,16 @@ enum DevAutomation {
                 (0, "ちなみにあれって来週のリリースに間に合いそうですか。", "順帶一提，那個趕得上下週的發布嗎？"),
                 (2, "正直厳しいですね。テストはまだ半分くらいです。", "老實說有點難，測試大概只做完一半。"),
             ], pending: "じゃあ来週の月曜にもう一回確認しましょう", draft: nil, elapsed: 134)
+            if env["INSTANT_ASSISTANT"] == "1" {
+                assistant.showDemo([
+                    ("整理目前的重點", "- **聯絡對方**：佐藤還沒聯絡，田中請他**今天之內**處理。\n- **下週發布**：田中問趕不趕得上，還沒有人回答。", 4),
+                    ("我可以怎麼回應？", "可以先確認範圍：「テストの残りはどのくらいかかりそうですか？」（剩下的測試大概要多久？）\n再看要不要延後發布。", 5),
+                ])
+            }
+            if let reveal = env["INSTANT_REVEAL"].flatMap(Int.init) {
+                try? await Task.sleep(for: .seconds(1))
+                ui.revealedCaption = reveal
+            }
             return
         }
         if let delay = env["INSTANT_DEMO_DELAY"].flatMap(Double.init) {

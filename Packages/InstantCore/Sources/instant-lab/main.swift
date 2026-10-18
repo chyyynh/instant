@@ -5,14 +5,15 @@ import InstantCore
 
 // End-to-end runs of the live pipeline on real audio, played at real-time speed.
 //
-//   instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file]
+//   instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file] [--ask question]
 //   instant-lab report <trace.jsonl> [truth.json]
 //   instant-lab reference <audio> --start s --duration s --out truth.json
 //
 // `reference` writes reference speaker turns for a clip using FluidAudio's offline VBx pipeline
 // (whole-clip context, far more accurate than streaming) — a stand-in for hand-labeled truth.
 //
-// `run` writes a trace (default /tmp/instant-trace.jsonl) and prints the report.
+// `run` writes a trace (default /tmp/instant-trace.jsonl) and prints the report. With --ask it then
+// asks Claude about the transcript (needs ANTHROPIC_API_KEY), the way the app's Claude panel does.
 // The app writes the same trace when launched with INSTANT_TRACE=<file>.
 
 @MainActor
@@ -29,6 +30,12 @@ func run(_ args: [String]) async -> Int32 {
     let duration = TimeInterval(option("--duration", "0")) ?? 0
     let tracePath = option("--trace", "/tmp/instant-trace.jsonl")
     let truthPath = option("--truth", "")
+    let question = option("--ask", "")
+    let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+    if !question.isEmpty && apiKey.isEmpty {
+        print("--ask needs ANTHROPIC_API_KEY")
+        return 2
+    }
     guard let path = args.first else { return usage() }
 
     setenv("INSTANT_TRACE", tracePath, 1)
@@ -58,11 +65,40 @@ func run(_ args: [String]) async -> Int32 {
     ])
     report(tracePath, truth: truthPath.isEmpty ? nil : truthPath)
     if case .failed = session.status { return 1 }
+    if !question.isEmpty { return await ask(question, about: session, client: ClaudeClient(apiKey: apiKey)) }
+    return 0
+}
+
+@MainActor
+func ask(_ question: String, about session: LiveSession, client: ClaudeClient) async -> Int32 {
+    let assistant = Assistant()
+    print("\n? \(question)")
+    let asked = ContinuousClock.now
+    var firstText: Duration?
+    assistant.ask(question, captions: session.captions, pending: session.pendingText,
+                  speakerName: { "說話者 \(session.speakerName($0))" }, client: client)
+    var printed = 0
+    while assistant.isResponding {
+        let text = assistant.messages.last?.text ?? ""
+        if text.count > printed {
+            if firstText == nil { firstText = .now - asked }
+            print(text.dropFirst(printed), terminator: "")
+            fflush(stdout)
+            printed = text.count
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+    }
+    if let error = assistant.errorMessage {
+        print("\n✗ \(error)")
+        return 1
+    }
+    print(assistant.messages.last?.text.dropFirst(printed) ?? "")
+    print("\n(first text after \(firstText.map { fmt($0 / .seconds(1)) } ?? "-")s, total \(fmt((ContinuousClock.now - asked) / .seconds(1)))s)")
     return 0
 }
 
 func usage() -> Int32 {
-    print("usage: instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file]")
+    print("usage: instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file] [--ask question]")
     print("       instant-lab report <trace.jsonl>")
     return 2
 }

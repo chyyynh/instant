@@ -6,7 +6,17 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppUI {
+    /// Mac: the Claude inspector.
     var inspectorShown = false
+    /// Mac: the speaker list, a popover from the toolbar.
+    var speakersShown = false
+    /// iOS: the AI sheet.
+    var assistantShown = false
+    /// Whether the question field has focus (Space is typed there, not start / stop).
+    var composerFocused = false
+    /// Caption to scroll to and highlight, asked for from the Claude panel.
+    var revealedCaption: Int?
+    private(set) var apiKey = APIKey.load()
     /// Whether the floating captions are showing.
     var overlayShown = false {
         didSet {
@@ -23,6 +33,11 @@ final class AppUI {
     /// Speaker slot being renamed; drives the rename alert.
     var renamingSpeaker: Int?
     var newSpeakerName = ""
+
+    func setAPIKey(_ key: String?) {
+        if let key, !key.isEmpty { APIKey.save(key) } else { APIKey.delete() }
+        apiKey = APIKey.load()
+    }
 
     func rename(_ speaker: Int, in session: LiveSession) {
         newSpeakerName = session.speakerNames[speaker] ?? ""
