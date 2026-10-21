@@ -7,57 +7,51 @@ import Foundation
 ///
 /// Audio goes out as 16 kHz mono 16-bit PCM in ~100ms chunks. Token times are seconds of audio
 /// since the stream began, the session's time base.
+///
+/// If the connection drops mid-session (seen: "connection reset by peer" 44 minutes in), it
+/// reconnects. Audio captured while disconnected is held and sent first on the new connection,
+/// and that connection's times are shifted onto the session's time base.
 @MainActor
 public final class CloudTranscriber: SpeechRecognizer {
     public let engine: SpeechEngine
     public let level = LevelMeter()
     /// Speakers as the service labeled them (Soniox with speakers on); nil otherwise.
     public let speakers: TokenSpeakers?
-    private let apiKey: String
-    private let language: String
-    private var socket: URLSessionWebSocketTask?
+    private let endpoint: CloudEndpoint
+    private var uplink: Uplink?
     private var feedTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
 
     nonisolated static let sampleRate = 16_000.0
     /// Bytes per chunk sent: 100ms of 16-bit samples.
     nonisolated static let chunkBytes = 3_200
+    /// Consecutive failed reconnects before giving up; waits 1, 2, 4, 8, 8s between them.
+    nonisolated static let maxReconnects = 5
 
     public init(engine: SpeechEngine, apiKey: String, locale: Locale, diarize: Bool) {
         self.engine = engine
-        self.apiKey = apiKey
-        language = locale.language.languageCode?.identifier ?? "ja"
         speakers = engine.diarizes && diarize ? TokenSpeakers() : nil
+        endpoint = CloudEndpoint(engine: engine, apiKey: apiKey, language: locale.language.languageCode?.identifier ?? "ja",
+                                 diarize: speakers != nil)
     }
 
     public func start(audio: AsyncStream<AudioChunk>) async throws -> AsyncThrowingStream<TranscriptEvent, Error> {
-        let socket = URLSession.shared.webSocketTask(with: try request())
-        self.socket = socket
-        socket.resume()
-        if engine == .soniox {
-            var config: JSONValue = [
-                "model": "stt-rt-v5",
-                "audio_format": "pcm_s16le",
-                "sample_rate": .number(Self.sampleRate),
-                "num_channels": 1,
-                "language_hints": [.string(language)],
-                // Marks pauses with an "<end>" token, where a final event is cut.
-                "enable_endpoint_detection": true,
-            ]
-            if speakers != nil { config["enable_speaker_diarization"] = true }
-            try await socket.send(.string(String(decoding: try JSONEncoder().encode(config), as: UTF8.self)))
-        }
-        Trace.shared.event("asr.start", ["engine": engine.rawValue, "language": language, "speakers": speakers != nil])
+        let socket = try await endpoint.connect()
+        let uplink = Uplink()
+        _ = uplink.attach(socket)
+        self.uplink = uplink
+        Trace.shared.event("asr.start", ["engine": engine.rawValue, "language": endpoint.language, "speakers": speakers != nil])
 
         let fed = AudioClock()
         let ended = AudioEnded()
-        let (level, engine, speakers) = (level, engine, speakers)
+        let (level, engine, speakers, endpoint) = (level, engine, speakers, endpoint)
         feedTask = Task.detached(priority: .userInitiated) {
-            await Self.feed(audio, to: socket, engine: engine, fed: fed, level: level, ended: ended)
+            await Self.feed(audio, to: uplink, engine: engine, fed: fed, level: level, ended: ended)
         }
         let (events, continuation) = AsyncThrowingStream<TranscriptEvent, Error>.makeStream()
         receiveTask = Task.detached {
-            await Self.receive(from: socket, engine: engine, fed: fed, speakers: speakers, ended: ended, into: continuation)
+            await Self.receive(from: socket, endpoint: endpoint, uplink: uplink, fed: fed, speakers: speakers,
+                               ended: ended, into: continuation)
         }
         return events
     }
@@ -65,14 +59,239 @@ public final class CloudTranscriber: SpeechRecognizer {
     public func stop() async {
         await feedTask?.value
         await receiveTask?.value
-        socket = nil
+        uplink = nil
     }
 
     public func cancel() async {
         feedTask?.cancel()
         receiveTask?.cancel()
-        socket?.cancel(with: .goingAway, reason: nil)
-        socket = nil
+        uplink?.close()
+        uplink = nil
+    }
+
+    // MARK: - Audio out
+
+    private nonisolated static func feed(_ audio: AsyncStream<AudioChunk>, to uplink: Uplink, engine: SpeechEngine,
+                                         fed: AudioClock, level: LevelMeter, ended: AudioEnded) async {
+        let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true)!
+        let converter = BufferConverter(outputFormat: format)
+        var pending = Data()
+        var pendingStart = 0.0
+        for await chunk in audio {
+            guard let buffer = converter.convert(chunk.buffer), let samples = buffer.int16ChannelData else { continue }
+            level.update(buffer.peakLevel)
+            if pending.isEmpty { pendingStart = fed.value }
+            pending.append(Data(bytes: samples[0], count: Int(buffer.frameLength) * 2))
+            _ = fed.add(Double(buffer.frameLength) / sampleRate)
+            if pending.count >= chunkBytes {
+                await send(pending, start: pendingStart, via: uplink, engine: engine)
+                pending = Data()
+            }
+        }
+        Trace.shared.event("audio.end", ["audio": fed.value.rounded(toPlaces: 2)])
+        ended.set()
+        // Ask for the last words, then give the service a few seconds to send them.
+        do {
+            if let socket = uplink.current {
+                switch engine {
+                case .soniox:
+                    if !pending.isEmpty { try await socket.send(.data(pending)) }
+                    try await socket.send(.string("")) // end of audio
+                case .elevenLabs:
+                    // The commit has to ride on an audio chunk; 100ms of silence if nothing's left.
+                    try await socket.send(message(pending.isEmpty ? Data(count: chunkBytes) : pending, engine: engine, commit: true))
+                case .apple:
+                    break
+                }
+            }
+            try await Task.sleep(for: .seconds(5))
+        } catch {
+            if !(error is CancellationError) { Trace.shared.event("asr.error", ["error": "\(error)", "stage": "send"]) }
+        }
+        uplink.close()
+    }
+
+    /// Sends audio (plus whatever was held while disconnected) in chunk-sized messages. While
+    /// disconnected, or if the send fails, the audio is held for the next connection.
+    private nonisolated static func send(_ audio: Data, start: Double, via uplink: Uplink, engine: SpeechEngine) async {
+        guard let (socket, data, dataStart) = uplink.route(audio, start: start) else { return }
+        var offset = 0
+        while offset < data.count {
+            let piece = data.subdata(in: offset..<min(offset + chunkBytes, data.count))
+            do {
+                try await socket.send(message(piece, engine: engine, commit: false))
+            } catch {
+                uplink.lost(socket, unsent: data.subdata(in: offset..<data.count),
+                            start: dataStart + Double(offset) / 2 / sampleRate)
+                return
+            }
+            offset += piece.count
+        }
+    }
+
+    private nonisolated static func message(_ audio: Data, engine: SpeechEngine, commit: Bool) throws -> URLSessionWebSocketTask.Message {
+        guard engine == .elevenLabs else { return .data(audio) }
+        let json: JSONValue = [
+            "message_type": "input_audio_chunk",
+            "audio_base_64": .string(audio.base64EncodedString()),
+            "commit": .bool(commit),
+            "sample_rate": .number(sampleRate),
+        ]
+        return .string(String(decoding: try JSONEncoder().encode(json), as: UTF8.self))
+    }
+
+    // MARK: - Results in
+
+    private nonisolated static func receive(from first: URLSessionWebSocketTask, endpoint: CloudEndpoint, uplink: Uplink,
+                                            fed: AudioClock, speakers: TokenSpeakers?, ended: AudioEnded,
+                                            into continuation: AsyncThrowingStream<TranscriptEvent, Error>.Continuation) async {
+        let engine = endpoint.engine
+        var socket = first
+        var soniox = SonioxParser(speakers: speakers, offset: 0)
+        var elevenLabs = ElevenLabsParser(offset: 0)
+        var failures = 0
+        while true {
+            do {
+                while !Task.isCancelled {
+                    let data: Data
+                    switch try await socket.receive() {
+                    case .string(let text): data = Data(text.utf8)
+                    case .data(let bytes): data = bytes
+                    @unknown default: continue
+                    }
+                    failures = 0
+                    let json = try JSONDecoder().decode(JSONValue.self, from: data)
+                    let reply: (events: [TranscriptEvent], done: Bool)
+                    switch engine {
+                    case .soniox: reply = try soniox.parse(json)
+                    case .elevenLabs:
+                        let (events, committed) = try elevenLabs.parse(json, fed: fed.value)
+                        reply = (events, committed && ended.value)
+                    case .apple: reply = ([], true)
+                    }
+                    for event in reply.events { yield(event, fed: fed, into: continuation) }
+                    if reply.done { break }
+                }
+                socket.cancel(with: .normalClosure, reason: nil)
+                continuation.finish()
+                return
+            } catch {
+                // The socket closing after the audio ended (and the wait for last words ran out) is
+                // the normal end, not a failure.
+                if ended.value || Task.isCancelled {
+                    continuation.finish()
+                    return
+                }
+                let status = (socket.response as? HTTPURLResponse)?.statusCode
+                Trace.shared.event("asr.error", ["error": "\(error)", "status": status ?? -1])
+                // Keep what was heard before the drop: the new connection starts from scratch.
+                let interrupted = engine == .soniox ? soniox.interrupted() : elevenLabs.interrupted()
+                for event in interrupted { yield(event, fed: fed, into: continuation) }
+                uplink.detach(socket)
+                socket.cancel(with: .goingAway, reason: nil)
+                guard isTransient(error, status: status), failures < maxReconnects else {
+                    continuation.finish(throwing: failure(error, status: status, engine: engine))
+                    return
+                }
+            }
+            // Reconnect, retrying with backoff while the connection can't be re-established.
+            while true {
+                failures += 1
+                let wait = min(1 << (failures - 1), 8)
+                Trace.shared.event("asr.reconnect", ["attempt": failures, "wait": wait, "audio": fed.value.rounded(toPlaces: 2)])
+                try? await Task.sleep(for: .seconds(wait))
+                if ended.value || Task.isCancelled {
+                    continuation.finish()
+                    return
+                }
+                do {
+                    socket = try await endpoint.connect()
+                    let offset = uplink.attach(socket)
+                    soniox = SonioxParser(speakers: speakers, offset: offset)
+                    elevenLabs = ElevenLabsParser(offset: offset)
+                    Trace.shared.event("asr.reconnected", ["attempt": failures, "offset": offset.rounded(toPlaces: 2),
+                                                           "backlog": (fed.value - offset).rounded(toPlaces: 2)])
+                    break
+                } catch {
+                    Trace.shared.event("asr.error", ["error": "\(error)", "stage": "reconnect"])
+                    guard isTransient(error, status: nil), failures < maxReconnects else {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    private nonisolated static func yield(_ event: TranscriptEvent, fed: AudioClock,
+                                          into continuation: AsyncThrowingStream<TranscriptEvent, Error>.Continuation) {
+        let tokens: [Token]
+        let kind: String
+        switch event {
+        case .volatile(let t): (tokens, kind) = (t, "volatile")
+        case .final(let t): (tokens, kind) = (t, "final")
+        }
+        Trace.shared.event("asr.result", [
+            "kind": kind,
+            "text": tokens.map(\.text).joined(),
+            "runs": tokens.count,
+            "start": (tokens.first?.start ?? 0).rounded(toPlaces: 2),
+            "end": (tokens.last?.end ?? 0).rounded(toPlaces: 2),
+            "lag": (fed.value - (tokens.last?.end ?? fed.value)).rounded(toPlaces: 2),
+        ])
+        continuation.yield(event)
+    }
+
+    /// Network drops and server-side hiccups are worth reconnecting for; a bad key or used-up
+    /// quota isn't.
+    nonisolated static func isTransient(_ error: Error, status: Int?) -> Bool {
+        if let status, status != 101 { return status == 408 || status >= 500 }
+        if case CloudTranscriberError.http(_, let status) = error { return status == 408 || status >= 500 }
+        if case CloudTranscriberError.service(_, let code, _) = error {
+            return ["408", "500", "502", "503", "504"].contains(code)
+        }
+        return true
+    }
+
+    private nonisolated static func failure(_ error: Error, status: Int?, engine: SpeechEngine) -> Error {
+        if let status, status != 101 { return CloudTranscriberError.http(engine, status) }
+        return error
+    }
+}
+
+/// Where and how to open a recognition WebSocket.
+struct CloudEndpoint: Sendable {
+    let engine: SpeechEngine
+    let apiKey: String
+    let language: String
+    let diarize: Bool
+
+    /// Opens a socket and sends the session config, ready for audio.
+    func connect() async throws -> URLSessionWebSocketTask {
+        let socket = URLSession.shared.webSocketTask(with: try request())
+        socket.resume()
+        if engine == .soniox {
+            var config: JSONValue = [
+                "model": "stt-rt-v5",
+                "audio_format": "pcm_s16le",
+                "sample_rate": .number(CloudTranscriber.sampleRate),
+                "num_channels": 1,
+                "language_hints": [.string(language)],
+                // Marks pauses with an "<end>" token, where a final event is cut.
+                "enable_endpoint_detection": true,
+            ]
+            if diarize { config["enable_speaker_diarization"] = true }
+            do {
+                try await socket.send(.string(String(decoding: try JSONEncoder().encode(config), as: UTF8.self)))
+            } catch {
+                socket.cancel(with: .goingAway, reason: nil)
+                if let status = (socket.response as? HTTPURLResponse)?.statusCode, status != 101 {
+                    throw CloudTranscriberError.http(engine, status)
+                }
+                throw error
+            }
+        }
+        return socket
     }
 
     private func request() throws -> URLRequest {
@@ -98,116 +317,73 @@ public final class CloudTranscriber: SpeechRecognizer {
             throw CloudTranscriberError.notCloud
         }
     }
+}
 
-    // MARK: - Audio out
+/// The socket audio currently goes to. While there is none (between a drop and the reconnect),
+/// audio is held — up to `maxBacklog` of the most recent — and sent first on the next socket.
+final class Uplink: @unchecked Sendable {
+    private let lock = NSLock()
+    // Guarded by `lock`.
+    private var socket: URLSessionWebSocketTask?
+    private var backlog = Data()
+    /// Session time where `backlog` starts.
+    private var backlogStart = 0.0
+    /// Session time where the audio routed so far ends.
+    private var routedEnd = 0.0
 
-    private nonisolated static func feed(_ audio: AsyncStream<AudioChunk>, to socket: URLSessionWebSocketTask, engine: SpeechEngine,
-                                         fed: AudioClock, level: LevelMeter, ended: AudioEnded) async {
-        let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true)!
-        let converter = BufferConverter(outputFormat: format)
-        var pending = Data()
-        do {
-            for await chunk in audio {
-                guard let buffer = converter.convert(chunk.buffer), let samples = buffer.int16ChannelData else { continue }
-                level.update(buffer.peakLevel)
-                pending.append(Data(bytes: samples[0], count: Int(buffer.frameLength) * 2))
-                _ = fed.add(Double(buffer.frameLength) / sampleRate)
-                if pending.count >= chunkBytes {
-                    try await socket.send(message(pending, engine: engine, commit: false))
-                    pending = Data()
-                }
+    /// 60s of 16 kHz 16-bit audio.
+    static let maxBacklog = 60 * 32_000
+
+    var current: URLSessionWebSocketTask? { lock.withLock { socket } }
+
+    /// The socket to send on and what to send (held audio first), or nil if the audio was held.
+    func route(_ audio: Data, start: Double) -> (URLSessionWebSocketTask, Data, Double)? {
+        lock.withLock {
+            routedEnd = start + Double(audio.count) / 2 / CloudTranscriber.sampleRate
+            if backlog.isEmpty { backlogStart = start }
+            backlog.append(audio)
+            if backlog.count > Self.maxBacklog {
+                let excess = backlog.count - Self.maxBacklog
+                backlog.removeFirst(excess)
+                backlogStart += Double(excess) / 2 / CloudTranscriber.sampleRate
             }
-            Trace.shared.event("audio.end", ["audio": fed.value.rounded(toPlaces: 2)])
-            ended.set()
-            // Ask for the last words, then give the service a few seconds to send them.
-            switch engine {
-            case .soniox:
-                if !pending.isEmpty { try await socket.send(.data(pending)) }
-                try await socket.send(.string("")) // end of audio
-            case .elevenLabs:
-                // The commit has to ride on an audio chunk; 100ms of silence if nothing's left.
-                try await socket.send(message(pending.isEmpty ? Data(count: chunkBytes) : pending, engine: engine, commit: true))
-            case .apple:
-                break
-            }
-            try await Task.sleep(for: .seconds(5))
-        } catch {
-            if !(error is CancellationError) { Trace.shared.event("asr.error", ["error": "\(error)", "stage": "send"]) }
+            guard let socket else { return nil }
+            defer { backlog = Data() }
+            return (socket, backlog, backlogStart)
         }
-        ended.set()
-        socket.cancel(with: .normalClosure, reason: nil)
     }
 
-    private nonisolated static func message(_ audio: Data, engine: SpeechEngine, commit: Bool) throws -> URLSessionWebSocketTask.Message {
-        guard engine == .elevenLabs else { return .data(audio) }
-        let json: JSONValue = [
-            "message_type": "input_audio_chunk",
-            "audio_base_64": .string(audio.base64EncodedString()),
-            "commit": .bool(commit),
-            "sample_rate": .number(sampleRate),
-        ]
-        return .string(String(decoding: try JSONEncoder().encode(json), as: UTF8.self))
+    /// A send on `socket` failed: hold the unsent audio and stop using that socket.
+    func lost(_ socket: URLSessionWebSocketTask, unsent: Data, start: Double) {
+        lock.withLock {
+            guard self.socket === socket else { return }
+            self.socket = nil
+            backlog = unsent + backlog
+            backlogStart = start
+        }
     }
 
-    // MARK: - Results in
+    /// The connection on `socket` dropped; hold audio until the next one.
+    func detach(_ socket: URLSessionWebSocketTask) {
+        lock.withLock {
+            guard self.socket === socket else { return }
+            self.socket = nil
+        }
+    }
 
-    private nonisolated static func receive(from socket: URLSessionWebSocketTask, engine: SpeechEngine, fed: AudioClock,
-                                            speakers: TokenSpeakers?, ended: AudioEnded,
-                                            into continuation: AsyncThrowingStream<TranscriptEvent, Error>.Continuation) async {
-        var soniox = SonioxParser(speakers: speakers)
-        var elevenLabs = ElevenLabsParser()
-        do {
-            while !Task.isCancelled {
-                let data: Data
-                switch try await socket.receive() {
-                case .string(let text): data = Data(text.utf8)
-                case .data(let bytes): data = bytes
-                @unknown default: continue
-                }
-                let json = try JSONDecoder().decode(JSONValue.self, from: data)
-                let reply: (events: [TranscriptEvent], done: Bool)
-                switch engine {
-                case .soniox: reply = try soniox.parse(json)
-                case .elevenLabs:
-                    let (events, committed) = try elevenLabs.parse(json, fed: fed.value)
-                    reply = (events, committed && ended.value)
-                case .apple: reply = ([], true)
-                }
-                for event in reply.events {
-                    let tokens: [Token]
-                    let kind: String
-                    switch event {
-                    case .volatile(let t): (tokens, kind) = (t, "volatile")
-                    case .final(let t): (tokens, kind) = (t, "final")
-                    }
-                    Trace.shared.event("asr.result", [
-                        "kind": kind,
-                        "text": tokens.map(\.text).joined(),
-                        "runs": tokens.count,
-                        "start": (tokens.first?.start ?? 0).rounded(toPlaces: 2),
-                        "end": (tokens.last?.end ?? 0).rounded(toPlaces: 2),
-                        "lag": (fed.value - (tokens.last?.end ?? fed.value)).rounded(toPlaces: 2),
-                    ])
-                    continuation.yield(event)
-                }
-                if reply.done { break }
-            }
-            socket.cancel(with: .normalClosure, reason: nil)
-            continuation.finish()
-        } catch {
-            // The socket closing after the audio ended (and the wait for last words ran out) is
-            // the normal end, not a failure.
-            if ended.value || Task.isCancelled {
-                continuation.finish()
-                return
-            }
-            let status = (socket.response as? HTTPURLResponse)?.statusCode
-            Trace.shared.event("asr.error", ["error": "\(error)", "status": status ?? -1])
-            if let status, status != 101 {
-                continuation.finish(throwing: CloudTranscriberError.http(engine, status))
-            } else {
-                continuation.finish(throwing: error)
-            }
+    /// Starts sending on `socket`. Returns the session time its first audio starts at, which is
+    /// where that connection's times begin.
+    func attach(_ socket: URLSessionWebSocketTask) -> Double {
+        lock.withLock {
+            self.socket = socket
+            return backlog.isEmpty ? routedEnd : backlogStart
+        }
+    }
+
+    func close() {
+        lock.withLock {
+            socket?.cancel(with: .normalClosure, reason: nil)
+            socket = nil
         }
     }
 }
@@ -216,10 +392,14 @@ public final class CloudTranscriber: SpeechRecognizer {
 /// pause ("<end>") or the end of a sentence, then sent as one final event, like Apple's results.
 struct SonioxParser {
     let speakers: TokenSpeakers?
+    /// Session time where this connection's audio starts; Soniox times count from there.
+    let offset: Double
     private var finals: [Token] = []
+    private var partial: [Token] = []
 
-    init(speakers: TokenSpeakers?) {
+    init(speakers: TokenSpeakers?, offset: Double) {
         self.speakers = speakers
+        self.offset = offset
     }
 
     mutating func parse(_ json: JSONValue) throws -> (events: [TranscriptEvent], done: Bool) {
@@ -227,11 +407,12 @@ struct SonioxParser {
             throw CloudTranscriberError.service(.soniox, code: "\(code)", message: json["error_message"]?.string ?? "")
         }
         var events: [TranscriptEvent] = []
-        var partial: [Token] = []
+        partial = []
         for item in json["tokens"]?.array ?? [] {
             // Translations (not requested) have no times; only the spoken words matter here.
             guard item["translation_status"]?.string != "translation", let text = item["text"]?.string else { continue }
-            let token = Token(text, start: (item["start_ms"]?.double ?? 0) / 1000, end: (item["end_ms"]?.double ?? 0) / 1000)
+            let token = Token(text, start: offset + (item["start_ms"]?.double ?? 0) / 1000,
+                              end: offset + (item["end_ms"]?.double ?? 0) / 1000)
             guard item["is_final"] == .bool(true) else {
                 if text != "<end>" { partial.append(token) }
                 continue
@@ -246,11 +427,20 @@ struct SonioxParser {
             }
             if let last = text.last, "。？！?!".contains(last) { flush(into: &events) }
         }
-        if let processed = json["final_audio_proc_ms"]?.double { speakers?.cover(until: processed / 1000) }
+        if let processed = json["final_audio_proc_ms"]?.double { speakers?.cover(until: offset + processed / 1000) }
         let done = json["finished"] == .bool(true)
         if done { flush(into: &events) }
         if !finals.isEmpty || !partial.isEmpty { events.append(.volatile(finals + partial)) }
         return (events, done)
+    }
+
+    /// The connection dropped: everything heard so far, including words not yet final, as a final event.
+    mutating func interrupted() -> [TranscriptEvent] {
+        finals += partial
+        partial = []
+        var events: [TranscriptEvent] = []
+        flush(into: &events)
+        return events
     }
 
     private mutating func flush(into events: inout [TranscriptEvent]) {
@@ -264,24 +454,35 @@ struct SonioxParser {
 /// commit with word timestamps.
 struct ElevenLabsParser {
     private var estimator = VolatileTimeEstimator()
-    private var committedEnd = 0.0
+    /// Session time where this connection's audio starts; ElevenLabs times count from there.
+    private let offset: Double
+    private var committedEnd: Double
+    private var partial: [Token] = []
+
+    init(offset: Double) {
+        self.offset = offset
+        committedEnd = offset
+    }
 
     /// Events for the message, and whether it was a commit.
     mutating func parse(_ json: JSONValue, fed: Double) throws -> (events: [TranscriptEvent], committed: Bool) {
         switch json["message_type"]?.string {
         case "partial_transcript":
             guard let text = json["text"]?.string, !text.isEmpty else { return ([], false) }
-            return ([.volatile(estimator.tokens(for: text, start: committedEnd, end: max(fed, committedEnd)))], false)
+            partial = estimator.tokens(for: text, start: committedEnd, end: max(fed, committedEnd))
+            return ([.volatile(partial)], false)
         case "committed_transcript_with_timestamps":
             var tokens = (json["words"]?.array ?? []).compactMap { word -> Token? in
                 guard word["type"]?.string != "spacing", let text = word["text"]?.string, !text.isEmpty else { return nil }
-                return Token(text, start: word["start"]?.double ?? committedEnd, end: word["end"]?.double ?? committedEnd)
+                return Token(text, start: word["start"]?.double.map { offset + $0 } ?? committedEnd,
+                             end: word["end"]?.double.map { offset + $0 } ?? committedEnd)
             }
             if tokens.isEmpty, let text = json["text"]?.string, !text.isEmpty {
                 tokens = estimator.tokens(for: text, start: committedEnd, end: max(fed, committedEnd))
             }
             committedEnd = tokens.last?.end ?? committedEnd
             estimator.reset()
+            partial = []
             return (tokens.isEmpty ? [] : [.final(tokens)], true)
         case let type? where json["error"] != nil:
             throw CloudTranscriberError.service(.elevenLabs, code: type, message: json["error"]?.string ?? "")
@@ -289,6 +490,12 @@ struct ElevenLabsParser {
             // session_started, committed_transcript (sent alongside the timestamped one), warnings.
             return ([], false)
         }
+    }
+
+    /// The connection dropped: the uncommitted words, as a final event.
+    mutating func interrupted() -> [TranscriptEvent] {
+        defer { partial = [] }
+        return partial.isEmpty ? [] : [.final(partial)]
     }
 }
 

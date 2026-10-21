@@ -119,6 +119,13 @@ public final class LiveSession {
     /// translation round-trips went from ~70ms to ~1.3s without it.
     private var activity: NSObjectProtocol?
     private var downloadContinuation: CheckedContinuation<Void, Never>?
+    /// Translation found the language pair missing mid-session (the check before starting can say
+    /// it's installed when it isn't); translations wait for the download.
+    private var awaitingLanguagePack = false
+    /// Failed translation attempts by source text; a line that keeps failing would hold back every
+    /// caption after it, so it's shown untranslated after `maxTranslationAttempts`.
+    private var translationFailures: [String: Int] = [:]
+    private static let maxTranslationAttempts = 3
     /// Resumed with the loaded diarizer, or nil when skipped or cancelled.
     private var speakerLoadContinuation: CheckedContinuation<SpeakerDiarizer?, Never>?
     private var startCancelled = false
@@ -395,8 +402,23 @@ public final class LiveSession {
     }
 
     public func translationDownloadFinished() {
-        downloadContinuation?.resume()
-        downloadContinuation = nil
+        if let downloadContinuation {
+            downloadContinuation.resume()
+            self.downloadContinuation = nil
+        } else if awaitingLanguagePack {
+            awaitingLanguagePack = false
+            translationDownload = nil
+            Trace.shared.event("mt.download_finished", [:])
+            scheduleTranslations()
+        }
+    }
+
+    /// Asks the UI to show the system's download sheet for the language pair, mid-session.
+    private func requestLanguagePack() {
+        guard !awaitingLanguagePack else { return }
+        awaitingLanguagePack = true
+        Trace.shared.event("mt.download_requested", ["target": targetLanguage.maximalIdentifier])
+        translationDownload = .init(source: sourceLocale.language, target: targetLanguage)
     }
 
     // MARK: - Pipeline
@@ -463,7 +485,7 @@ public final class LiveSession {
     }
 
     private func translate(lineID: Line.ID) {
-        guard let translator, let line = transcript.line(lineID) else { return }
+        guard let translator, !awaitingLanguagePack, let line = transcript.line(lineID) else { return }
         transcript.beginTranslation(forSource: line.source)
         let context = transcript.context(before: lineID, limit: contextLimit)
         Trace.shared.event("mt.request", ["id": lineID, "source": line.source, "context": context.count])
@@ -482,8 +504,19 @@ public final class LiveSession {
                         && !transcript.shownLines.suffix(8).contains { $0.source == line.source },
                 ])
             } catch {
-                transcript.translationFailed(forSource: line.source)
                 Trace.shared.event("mt.error", ["id": lineID, "source": line.source, "error": "\(error)"])
+                if Self.isNotInstalled(error) {
+                    transcript.translationFailed(forSource: line.source)
+                    requestLanguagePack()
+                    return
+                }
+                let failures = translationFailures[line.source, default: 0] + 1
+                translationFailures[line.source] = failures
+                if failures >= Self.maxTranslationAttempts {
+                    transcript.setTranslation("（無法翻譯）", forSource: line.source)
+                } else {
+                    transcript.translationFailed(forSource: line.source)
+                }
             }
         }
     }
@@ -595,6 +628,11 @@ public final class LiveSession {
         publishRetry?.cancel()
         publishRetry = nil
         speakerWaitStarted = [:]
+        translationFailures = [:]
+        if awaitingLanguagePack {
+            awaitingLanguagePack = false
+            translationDownload = nil
+        }
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
         startedAt = nil
@@ -614,6 +652,10 @@ public final class LiveSession {
             return MicrophoneSource()
             #endif
         }
+    }
+
+    private static func isNotInstalled(_ error: Error) -> Bool {
+        TranslationError.notInstalled ~= error
     }
 
     private func makeTranslator() async throws -> Translator {
