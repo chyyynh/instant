@@ -22,16 +22,13 @@ struct InstantCommands: Commands {
                 }
             }
             .keyboardShortcut(.space, modifiers: [])
-            .disabled(ui.renamingSpeaker != nil || ui.composerFocused) // Space belongs to the text field then
+            .disabled(ui.composerFocused) // Space belongs to the text field then
             Divider()
             Toggle("麥克風", isOn: input(.microphone))
                 .keyboardShortcut("1")
                 .disabled(session.status.isActive)
             Toggle("Mac 聲音", isOn: input(.systemAudio))
                 .keyboardShortcut("2")
-                .disabled(session.status.isActive)
-            Divider()
-            Toggle("區分說話者", isOn: session.speakersEnabledBinding)
                 .disabled(session.status.isActive)
             Divider()
             Button("清除字幕") { ui.clear(session) }
@@ -60,8 +57,6 @@ struct InstantCommands: Commands {
                 .keyboardShortcut("o", modifiers: [.command, .option])
             Toggle("浮動字幕", isOn: Binding(get: { ui.overlayShown }, set: { ui.overlayShown = $0 }))
                 .keyboardShortcut("f", modifiers: [.command, .option])
-            Toggle("說話者", isOn: Binding(get: { ui.speakersShown }, set: { ui.speakersShown = $0 }))
-                .keyboardShortcut("i", modifiers: [.command, .option])
             Toggle("和 Claude 討論", isOn: Binding(get: { ui.inspectorShown }, set: { ui.inspectorShown = $0 }))
                 .keyboardShortcut("a", modifiers: [.command, .option])
             Button("新的 Claude 對話") { assistant.reset() }

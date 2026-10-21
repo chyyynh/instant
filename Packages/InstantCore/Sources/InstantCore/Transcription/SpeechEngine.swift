@@ -18,9 +18,6 @@ public enum SpeechEngine: String, CaseIterable, Identifiable, Sendable {
     }
 
     public var isCloud: Bool { self != .apple }
-
-    /// The engine labels speakers itself, so the on-device speaker model isn't needed.
-    public var diarizes: Bool { self == .soniox }
 }
 
 /// Streams recognition of live audio as volatile / final events.
@@ -35,14 +32,3 @@ public protocol SpeechRecognizer: AnyObject {
 }
 
 extension LiveTranscriber: SpeechRecognizer {}
-
-/// Who spoke when, on the session's time base (seconds of audio since it began).
-public protocol SpeakerSource: AnyObject, Sendable {
-    /// Audio up to here has been attributed; lines ending later may still get a speaker.
-    var coveredUntil: Double { get }
-    func attribute(start: Double, end: Double) -> SpeakerDiarizer.Attribution
-    /// Slots heard in the latest audio.
-    var speakingNow: [Int] { get }
-}
-
-extension SpeakerDiarizer: SpeakerSource {}

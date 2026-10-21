@@ -59,19 +59,6 @@ public final class LiveSession {
     /// `prepareTranslation()`, then `translationDownloadFinished()`.
     public private(set) var translationDownload: TranslationSession.Configuration?
 
-    /// Tell speakers apart (FluidAudio Sortformer, up to 4). The model downloads on first use.
-    public var speakerDiarizationEnabled = true
-    /// Names the user gave diarized speaker slots ("田中"); unnamed ones show as A, B, C, D.
-    public var speakerNames: [Int: String] = [:]
-    /// Speaker slots in order of first appearance, so unnamed speakers read A, B, C… as they turn
-    /// up (Sortformer's slot numbers can skip).
-    public private(set) var speakerOrder: [Int] = []
-    /// How long a finished line may wait for diarization to reach it before showing without a speaker.
-    public var speakerWait: Duration = .milliseconds(1200)
-    /// Download progress (0…1) of the speaker model while it's downloading (first use only); nil otherwise.
-    public private(set) var speakerModelDownload: Double?
-    /// Approximate download size of the speaker model, for progress text.
-    public static let speakerModelMegabytes = 240
     /// When the running session started listening; nil when not running.
     public private(set) var startedAt: Date?
 
@@ -109,11 +96,7 @@ public final class LiveSession {
     private var settleTask: Task<Void, Never>?
     private var stableTimers: [String: Task<Void, Never>] = [:]
     private var stallProbe: Task<Void, Never>?
-    private var diarizer: SpeakerSource?
     private var audioTasks: [Task<Void, Never>] = []
-    /// When each finished line started waiting for diarization, by line id.
-    private var speakerWaitStarted: [Line.ID: ContinuousClock.Instant] = [:]
-    private var publishRetry: Task<Void, Never>?
     private var handleTimes: [Double] = []
     /// Keeps macOS from App-Napping us while the user watches another app: in the background,
     /// translation round-trips went from ~70ms to ~1.3s without it.
@@ -126,8 +109,6 @@ public final class LiveSession {
     /// caption after it, so it's shown untranslated after `maxTranslationAttempts`.
     private var translationFailures: [String: Int] = [:]
     private static let maxTranslationAttempts = 3
-    /// Resumed with the loaded diarizer, or nil when skipped or cancelled.
-    private var speakerLoadContinuation: CheckedContinuation<SpeakerDiarizer?, Never>?
     private var startCancelled = false
     private var recorderTask: Task<Double, Never>?
     private var recordingURL: URL?
@@ -148,8 +129,6 @@ public final class LiveSession {
         guard !status.isActive else { return }
         // A recorded session's captions belong to its recording: start afresh.
         if recording != nil { clear() }
-        diarizer = nil
-        speakerOrder = []
         startCancelled = false
         Trace.shared.begin()
         Trace.shared.event("session.start", [
@@ -169,30 +148,16 @@ public final class LiveSession {
             let key = engine.isCloud ? apiKey(engine) ?? "" : ""
             if engine.isCloud && key.isEmpty { throw SessionError.missingAPIKey(engine) }
             let cloud = engine.isCloud
-                ? CloudTranscriber(engine: engine, apiKey: key, locale: sourceLocale, diarize: speakerDiarizationEnabled)
+                ? CloudTranscriber(engine: engine, apiKey: key, locale: sourceLocale)
                 : nil
-            if let speakers = cloud?.speakers {
-                // The service labels speakers itself; no on-device model.
-                diarizer = speakers
-            } else if speakerDiarizationEnabled {
-                status = .preparing("準備說話者辨識…")
-                diarizer = await loadDiarizer()
-                speakerModelDownload = nil
-            }
 
-            try checkCancelled()
             status = .preparing("開啟音訊…")
             let source = override ?? makeAudioSource()
             audioSource = source
             sourceDescription = (source as? FileAudioSource)?.name ?? (input == .microphone ? "麥克風" : "Mac 聲音")
             var chunks = try await source.start()
-            // Recognition, diarization and the recorder each get every chunk, in parallel.
+            // Recognition and the recorder each get every chunk, in parallel.
             var consumers: [AsyncStream<AudioChunk>.Continuation] = []
-            if let diarizer = diarizer as? SpeakerDiarizer {
-                let (forDiarization, toDiarization) = AsyncStream<AudioChunk>.makeStream()
-                consumers.append(toDiarization)
-                audioTasks.append(Task.detached(priority: .userInitiated) { await diarizer.run(forDiarization) })
-            }
             if recordingEnabled {
                 let (forRecorder, toRecorder) = AsyncStream<AudioChunk>.makeStream()
                 consumers.append(toRecorder)
@@ -242,63 +207,15 @@ public final class LiveSession {
         }
     }
 
-    /// Loads the speaker model; returns early with nil if the user skips speakers for this
-    /// session (the download keeps going in the background, so it's ready next time).
-    private func loadDiarizer() async -> SpeakerDiarizer? {
-        await withCheckedContinuation { continuation in
-            speakerLoadContinuation = continuation
-            Task {
-                let loaded: SpeakerDiarizer?
-                do {
-                    loaded = try await SpeakerDiarizer.load { fraction in
-                        // Only reported while downloading (first use, ~240 MB).
-                        Task { @MainActor [self] in
-                            guard fraction < 1, speakerLoadContinuation != nil else { return }
-                            speakerModelDownload = fraction
-                            status = .preparing("下載說話者辨識模型 \(Int(fraction * 100))%（只有第一次）")
-                        }
-                    }
-                } catch {
-                    // Captions still work without speakers.
-                    Trace.shared.event("spk.error", ["error": "\(error)", "stage": "load"])
-                    loaded = nil
-                }
-                finishSpeakerLoad(loaded)
-            }
-        }
-    }
-
-    private func finishSpeakerLoad(_ diarizer: SpeakerDiarizer?) {
-        speakerLoadContinuation?.resume(returning: diarizer)
-        speakerLoadContinuation = nil
-    }
-
-    /// Starts this session without telling speakers apart, instead of waiting for the speaker
-    /// model to download. `speakerDiarizationEnabled` is unchanged, so the next session uses it.
-    public func skipSpeakerDiarization() {
-        guard speakerLoadContinuation != nil else { return }
-        Trace.shared.event("spk.skip", ["download": speakerModelDownload ?? -1])
-        speakerModelDownload = nil
-        finishSpeakerLoad(nil)
-    }
-
-    /// Abandons a start that's still preparing (e.g. downloading the speaker model).
+    /// Abandons a start that's still preparing (e.g. downloading the translation languages).
     public func cancelStart() {
         guard case .preparing = status else { return }
         startCancelled = true
-        speakerModelDownload = nil
-        finishSpeakerLoad(nil)
         translationDownloadFinished()
     }
 
     private func checkCancelled() throws {
         if startCancelled { throw CancellationError() }
-    }
-
-    /// Speaker slots heard in the latest audio, for a "speaking now" indicator. Not observed:
-    /// poll it (it changes every 80ms).
-    public var speakingNow: [Int] {
-        status == .running ? diarizer?.speakingNow ?? [] : []
     }
 
     /// Stops capture; already-heard speech is still recognized and translated.
@@ -316,8 +233,6 @@ public final class LiveSession {
         discardRecording()
         transcript = Transcript()
         captions = []
-        speakerNames = [:]
-        speakerOrder = []
         status = .idle
     }
 
@@ -327,29 +242,18 @@ public final class LiveSession {
         recording = nil
     }
 
-    private func schedulePublishRetry() {
-        guard publishRetry == nil else { return }
-        publishRetry = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(150))
-            guard let self, !Task.isCancelled else { return }
-            publishRetry = nil
-            publish()
-        }
-    }
-
     #if DEBUG
-    /// Debug-only: puts the session in a canned listening state (captions with speakers, speech in
-    /// progress) without running the pipeline, so the UI can be checked where speech recognition
-    /// can't run, such as the Simulator.
-    public func showDemoState(captions demo: [(speaker: Int, source: String, translation: String)],
+    /// Debug-only: puts the session in a canned listening state (captions, speech in progress)
+    /// without running the pipeline, so the UI can be checked where speech recognition can't run,
+    /// such as the Simulator.
+    public func showDemoState(captions demo: [(source: String, translation: String)],
                               pending: String, draft: String?, elapsed: TimeInterval) {
         captions = demo.enumerated().map { index, line in
-            var caption = Line(id: index, source: line.source, translation: line.translation, isFinal: true, speaker: line.speaker)
+            var caption = Line(id: index, source: line.source, translation: line.translation, isFinal: true)
             // Spread over the elapsed time, leaving the last stretch for the pending line.
             caption.start = elapsed * 0.9 * Double(index) / Double(demo.count)
             return caption
         }
-        speakerOrder = demo.map(\.speaker).reduce(into: []) { order, slot in if !order.contains(slot) { order.append(slot) } }
         pendingText = pending
         draftTranslation = draft
         sourceDescription = input == .microphone ? "麥克風" : "Mac 聲音"
@@ -358,43 +262,11 @@ public final class LiveSession {
     }
     #endif
 
-    /// Display name for a diarized speaker slot.
-    public func speakerName(_ speaker: Int) -> String {
-        speakerNames[speaker] ?? String(UnicodeScalar(UInt8(65 + (speakerOrder.firstIndex(of: speaker) ?? speaker))))
-    }
-
     /// Copies what views show out of `transcript`, assigning only what changed so observers of
     /// one property aren't invalidated by changes to another.
     private func publish() {
-        while captions.count < transcript.shownCount {
-            var line = transcript.lines[captions.count]
-            if let diarizer {
-                // Let diarization (≈1s behind) reach the end of the line, so its speaker is known
-                // when it appears instead of popping in later.
-                let now = ContinuousClock.now
-                let waitStarted = speakerWaitStarted[line.id, default: now]
-                speakerWaitStarted[line.id] = waitStarted
-                let waited = now - waitStarted
-                if diarizer.coveredUntil < line.end, waited < speakerWait {
-                    schedulePublishRetry()
-                    break
-                }
-                let attribution = diarizer.attribute(start: line.start, end: line.end)
-                line.speaker = attribution.speaker
-                if let speaker = attribution.speaker, !speakerOrder.contains(speaker) { speakerOrder.append(speaker) }
-                speakerWaitStarted[line.id] = nil
-                Trace.shared.event("spk.assign", [
-                    "id": line.id,
-                    "source": line.source,
-                    "start": line.start.rounded(toPlaces: 2),
-                    "end": line.end.rounded(toPlaces: 2),
-                    "speaker": attribution.speaker ?? -1,
-                    "share": attribution.share.rounded(toPlaces: 2),
-                    "wait_ms": Int(Trace.seconds(waited) * 1000),
-                    "covered": diarizer.coveredUntil >= line.end,
-                ])
-            }
-            captions.append(line)
+        if captions.count < transcript.shownCount {
+            captions.append(contentsOf: transcript.lines[captions.count..<transcript.shownCount])
         }
         let pending = transcript.pendingText
         if pending != pendingText { pendingText = pending }
@@ -624,10 +496,6 @@ public final class LiveSession {
         stallProbe = nil
         audioTasks.forEach { $0.cancel() }
         audioTasks = []
-        // Keep `diarizer`: translations still landing after the audio ends need it for speakers.
-        publishRetry?.cancel()
-        publishRetry = nil
-        speakerWaitStarted = [:]
         translationFailures = [:]
         if awaitingLanguagePack {
             awaitingLanguagePack = false

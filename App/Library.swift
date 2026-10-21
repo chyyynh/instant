@@ -2,7 +2,7 @@ import AVFoundation
 import InstantCore
 import SwiftUI
 
-/// A listening the user saved: captions with their times and speakers, the conversation with
+/// A listening the user saved: captions with their times, the conversation with
 /// Claude, and (optionally) the audio, which the captions' times point into.
 struct SavedListening: Codable, Identifiable, Hashable {
     struct Caption: Codable, Hashable {
@@ -10,10 +10,6 @@ struct SavedListening: Codable, Identifiable, Hashable {
         var end: TimeInterval
         var source: String
         var translation: String
-        /// Speaker name as shown when saved ("田中", "說話者 A").
-        var speaker: String?
-        /// Index into the speaker colors.
-        var color: Int?
     }
 
     struct Message: Codable, Hashable {
@@ -33,16 +29,9 @@ struct SavedListening: Codable, Identifiable, Hashable {
     var conversation: [Message]
     var hasAudio: Bool
 
-    var speakerCount: Int { Set(captions.compactMap(\.speaker)).count }
-
-    /// The transcript as plain text, with speaker names, like the live one.
+    /// The transcript as plain text, like the live one.
     var transcriptText: String {
-        var previous: String?
-        return captions.map { caption in
-            defer { previous = caption.speaker }
-            let header = caption.speaker.flatMap { $0 == previous ? nil : "\($0)：\n" } ?? ""
-            return "\(header)\(caption.translation)\n\(caption.source)"
-        }.joined(separator: "\n\n")
+        captions.map { "\($0.translation)\n\($0.source)" }.joined(separator: "\n\n")
     }
 }
 
@@ -81,9 +70,7 @@ final class Library {
             input: session.sourceDescription,
             languages: session.languageTitle,
             captions: session.captions.map { line in
-                SavedListening.Caption(start: line.start, end: line.end, source: line.source, translation: line.translation ?? "",
-                                       speaker: line.speaker.map { session.displayName(of: $0) },
-                                       color: line.speaker.map { session.speakerColorIndex($0) })
+                SavedListening.Caption(start: line.start, end: line.end, source: line.source, translation: line.translation ?? "")
             },
             conversation: conversation.map { .init(fromUser: $0.role == .user, text: $0.text) },
             hasAudio: audio && recording != nil)

@@ -97,7 +97,6 @@ private struct OverlayView: View {
             if overlayLines > 1, captions.count > 1 {
                 previous(captions[captions.count - 2])
             }
-            speaker(of: current)
             Text(current.translation ?? "")
                 .font(CaptionMetrics.translationFont(points))
             if original {
@@ -131,14 +130,6 @@ private struct OverlayView: View {
             .font(.system(size: (captionPoints * 0.72).rounded()))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-    }
-
-    @ViewBuilder
-    private func speaker(of line: Line) -> some View {
-        if let speaker = line.speaker {
-            SpeakerLabel(name: session.displayName(of: speaker), color: session.speakerColor(speaker))
-                .font(.caption.weight(.semibold))
-        }
     }
 }
 

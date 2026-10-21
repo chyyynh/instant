@@ -120,9 +120,7 @@ private struct ListeningDetail: View {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     ForEach(listening.captions.indices, id: \.self) { index in
                         let caption = listening.captions[index]
-                        let newSpeaker = caption.speaker != nil && (index == 0 || listening.captions[index - 1].speaker != caption.speaker)
                         CaptionRow(translation: caption.translation, original: showOriginal ? caption.source : nil, points: captionPoints,
-                                   speaker: newSpeaker ? caption.speaker.map { CaptionRow.Speaker(name: $0, color: LiveSession.speakerColors[caption.color ?? 0]) } : nil,
                                    asked: nil)
                             .equatable()
                             .background {
@@ -152,11 +150,11 @@ private struct ListeningDetail: View {
         }
         .navigationTitle(listening.title)
         #if os(macOS)
-        .navigationSubtitle("\(listening.date.formatted(date: .abbreviated, time: .shortened)) · \(listening.input) · \(PlaybackBar.format(listening.duration))\(listening.speakerCount > 0 ? " · \(listening.speakerCount) 位說話者" : "")")
+        .navigationSubtitle("\(listening.date.formatted(date: .abbreviated, time: .shortened)) · \(listening.input) · \(PlaybackBar.format(listening.duration))")
         #endif
         .safeAreaBar(edge: .bottom) {
             if let player {
-                PlaybackBar(player: player, segments: PlaybackBar.Segment.runs(listening.captions.map { ($0.start, $0.end, $0.color) }))
+                PlaybackBar(player: player, segments: PlaybackBar.Segment.runs(listening.captions.map { ($0.start, $0.end) }))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                     .glassEffect(.regular, in: .rect(cornerRadius: 18))

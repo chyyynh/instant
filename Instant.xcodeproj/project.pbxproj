@@ -20,7 +20,6 @@
 		E1CB0CF05221456E278840F8 /* Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = F770DD89C73E549254120FD7 /* Library.swift */; };
 		E4CB1C989E0A300AF3968FC7 /* InstantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F40C58569389C616E5EBDF /* InstantApp.swift */; };
 		E75FC5320010DEC60C7F28A1 /* InstantCore in Frameworks */ = {isa = PBXBuildFile; productRef = A238C5A6C5989A0A8F10EAB7 /* InstantCore */; };
-		EF641469B7FEF998FE201E0C /* SpeakerInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2A68A0D2C801215292F73AB /* SpeakerInspector.swift */; };
 		F848B62826E515CDCDD693C5 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4337CB201DB2981FAA23F70F /* AppState.swift */; };
 		F8ECD2915243264AE1165754 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47372E1B877680C90D177F09 /* LibraryView.swift */; };
 /* End PBXBuildFile section */
@@ -40,7 +39,6 @@
 		BAB4A2D07C668E5D558A2C5A /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
 		CC6B516380E8F98BC82433B6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		CE606314CB675D017F4EB425 /* PlaybackViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackViews.swift; sourceTree = "<group>"; };
-		E2A68A0D2C801215292F73AB /* SpeakerInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerInspector.swift; sourceTree = "<group>"; };
 		F0A6CB3BA6399A51B07CF8B5 /* Commands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Commands.swift; sourceTree = "<group>"; };
 		F770DD89C73E549254120FD7 /* Library.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
 		FCEBCF4897B72E9D4ABCC834 /* InstantCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = InstantCore; path = Packages/InstantCore; sourceTree = SOURCE_ROOT; };
@@ -100,7 +98,6 @@
 				BAB4A2D07C668E5D558A2C5A /* OverlayWindow.swift */,
 				CE606314CB675D017F4EB425 /* PlaybackViews.swift */,
 				63CC483FCE2C36648F15AB40 /* SettingsView.swift */,
-				E2A68A0D2C801215292F73AB /* SpeakerInspector.swift */,
 				88F8C7BD56A062D128D9B9C7 /* TranscriptView.swift */,
 			);
 			path = App;
@@ -183,7 +180,6 @@
 				C01164A251B35C78F6E8AA29 /* OverlayWindow.swift in Sources */,
 				ABB506FD175E6F7B9EB7943A /* PlaybackViews.swift in Sources */,
 				0148E686D7040C6EE871B958 /* SettingsView.swift in Sources */,
-				EF641469B7FEF998FE201E0C /* SpeakerInspector.swift in Sources */,
 				22A3CC44272915EEEF0D415D /* TranscriptView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

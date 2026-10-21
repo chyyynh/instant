@@ -1,13 +1,11 @@
 import InstantCore
 import SwiftUI
 
-/// Play / pause, position, and a scrubber colored by who spoke when.
+/// Play / pause, position, and a scrubber showing where there was speech.
 struct PlaybackBar: View {
     struct Segment: Equatable {
         let start: TimeInterval
         let end: TimeInterval
-        /// Index into the speaker colors; nil for no speaker.
-        let color: Int?
     }
 
     let player: Player
@@ -59,7 +57,7 @@ struct PlaybackBar: View {
     }
 }
 
-/// The recording's length as a track: who spoke when, the played part, and a playhead to drag.
+/// The recording's length as a track: where there was speech, and a playhead to drag.
 private struct Scrubber: View {
     let player: Player
     let segments: [PlaybackBar.Segment]
@@ -75,7 +73,7 @@ private struct Scrubber: View {
                     let segment = segments[index]
                     let x = width * segment.start / duration
                     Rectangle()
-                        .fill(segment.color.map { LiveSession.speakerColors[$0] } ?? Color.secondary)
+                        .fill(.tint)
                         .frame(width: max(width * (segment.end - segment.start) / duration - 1, 1), height: 6)
                         .offset(x: x)
                 }
@@ -101,14 +99,14 @@ private struct Scrubber: View {
 }
 
 extension PlaybackBar.Segment {
-    /// Runs of consecutive captions by the same speaker.
-    static func runs(_ captions: [(start: TimeInterval, end: TimeInterval, color: Int?)]) -> [Self] {
+    /// Runs of captions less than 3s apart.
+    static func runs(_ captions: [(start: TimeInterval, end: TimeInterval)]) -> [Self] {
         var runs: [Self] = []
         for caption in captions where caption.end > caption.start {
-            if let last = runs.last, last.color == caption.color, caption.start - last.end < 3 {
-                runs[runs.count - 1] = Self(start: last.start, end: max(last.end, caption.end), color: last.color)
+            if let last = runs.last, caption.start - last.end < 3 {
+                runs[runs.count - 1] = Self(start: last.start, end: max(last.end, caption.end))
             } else {
-                runs.append(Self(start: caption.start, end: caption.end, color: caption.color))
+                runs.append(Self(start: caption.start, end: caption.end))
             }
         }
         return runs
@@ -128,9 +126,7 @@ struct RecordingCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PlaybackBar(player: player, segments: PlaybackBar.Segment.runs(session.captions.map { line in
-                (line.start, line.end, line.speaker.map { session.speakerColorIndex($0) })
-            }))
+            PlaybackBar(player: player, segments: PlaybackBar.Segment.runs(session.captions.map { ($0.start, $0.end) }))
             HStack(spacing: 8) {
                 if let saved = library.listenings.first(where: { $0.id == ui.savedListening }) {
                     Label("已儲存為「\(saved.title)」", systemImage: "checkmark.circle.fill")
@@ -196,7 +192,7 @@ struct SaveListeningSheet: View {
                     Text(summary)
                 }
                 Section("要保存") {
-                    LabeledContent("字幕與翻譯", value: "含說話者名稱")
+                    LabeledContent("字幕與翻譯", value: "含時間")
                     if let recording = session.recording {
                         Toggle(isOn: $keepAudio) {
                             Text("錄音")
@@ -252,12 +248,11 @@ struct SaveListeningSheet: View {
         }
     }
 
-    /// "12 分 48 秒 · 41 句字幕 · 2 位說話者"
+    /// "12 分 48 秒 · 41 句字幕"
     private var summary: String {
         let duration = Duration.seconds((session.recording?.duration ?? session.captions.last?.end ?? 0).rounded(.down))
             .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow))
-        let speakers = session.speakers.count
-        return "\(duration) · \(session.captions.count) 句字幕" + (speakers > 0 ? " · \(speakers) 位說話者" : "")
+        return "\(duration) · \(session.captions.count) 句字幕"
     }
 
     private var defaultTitle: String {

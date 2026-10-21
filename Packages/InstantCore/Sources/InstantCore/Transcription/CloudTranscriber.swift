@@ -15,8 +15,6 @@ import Foundation
 public final class CloudTranscriber: SpeechRecognizer {
     public let engine: SpeechEngine
     public let level = LevelMeter()
-    /// Speakers as the service labeled them (Soniox with speakers on); nil otherwise.
-    public let speakers: TokenSpeakers?
     private let endpoint: CloudEndpoint
     private var uplink: Uplink?
     private var feedTask: Task<Void, Never>?
@@ -28,11 +26,9 @@ public final class CloudTranscriber: SpeechRecognizer {
     /// Consecutive failed reconnects before giving up; waits 1, 2, 4, 8, 8s between them.
     nonisolated static let maxReconnects = 5
 
-    public init(engine: SpeechEngine, apiKey: String, locale: Locale, diarize: Bool) {
+    public init(engine: SpeechEngine, apiKey: String, locale: Locale) {
         self.engine = engine
-        speakers = engine.diarizes && diarize ? TokenSpeakers() : nil
-        endpoint = CloudEndpoint(engine: engine, apiKey: apiKey, language: locale.language.languageCode?.identifier ?? "ja",
-                                 diarize: speakers != nil)
+        endpoint = CloudEndpoint(engine: engine, apiKey: apiKey, language: locale.language.languageCode?.identifier ?? "ja")
     }
 
     public func start(audio: AsyncStream<AudioChunk>) async throws -> AsyncThrowingStream<TranscriptEvent, Error> {
@@ -40,18 +36,17 @@ public final class CloudTranscriber: SpeechRecognizer {
         let uplink = Uplink()
         _ = uplink.attach(socket)
         self.uplink = uplink
-        Trace.shared.event("asr.start", ["engine": engine.rawValue, "language": endpoint.language, "speakers": speakers != nil])
+        Trace.shared.event("asr.start", ["engine": engine.rawValue, "language": endpoint.language])
 
         let fed = AudioClock()
         let ended = AudioEnded()
-        let (level, engine, speakers, endpoint) = (level, engine, speakers, endpoint)
+        let (level, engine, endpoint) = (level, engine, endpoint)
         feedTask = Task.detached(priority: .userInitiated) {
             await Self.feed(audio, to: uplink, engine: engine, fed: fed, level: level, ended: ended)
         }
         let (events, continuation) = AsyncThrowingStream<TranscriptEvent, Error>.makeStream()
         receiveTask = Task.detached {
-            await Self.receive(from: socket, endpoint: endpoint, uplink: uplink, fed: fed, speakers: speakers,
-                               ended: ended, into: continuation)
+            await Self.receive(from: socket, endpoint: endpoint, uplink: uplink, fed: fed, ended: ended, into: continuation)
         }
         return events
     }
@@ -143,11 +138,11 @@ public final class CloudTranscriber: SpeechRecognizer {
     // MARK: - Results in
 
     private nonisolated static func receive(from first: URLSessionWebSocketTask, endpoint: CloudEndpoint, uplink: Uplink,
-                                            fed: AudioClock, speakers: TokenSpeakers?, ended: AudioEnded,
+                                            fed: AudioClock, ended: AudioEnded,
                                             into continuation: AsyncThrowingStream<TranscriptEvent, Error>.Continuation) async {
         let engine = endpoint.engine
         var socket = first
-        var soniox = SonioxParser(speakers: speakers, offset: 0)
+        var soniox = SonioxParser(offset: 0)
         var elevenLabs = ElevenLabsParser(offset: 0)
         var failures = 0
         while true {
@@ -207,7 +202,7 @@ public final class CloudTranscriber: SpeechRecognizer {
                 do {
                     socket = try await endpoint.connect()
                     let offset = uplink.attach(socket)
-                    soniox = SonioxParser(speakers: speakers, offset: offset)
+                    soniox = SonioxParser(offset: offset)
                     elevenLabs = ElevenLabsParser(offset: offset)
                     Trace.shared.event("asr.reconnected", ["attempt": failures, "offset": offset.rounded(toPlaces: 2),
                                                            "backlog": (fed.value - offset).rounded(toPlaces: 2)])
@@ -264,14 +259,13 @@ struct CloudEndpoint: Sendable {
     let engine: SpeechEngine
     let apiKey: String
     let language: String
-    let diarize: Bool
 
     /// Opens a socket and sends the session config, ready for audio.
     func connect() async throws -> URLSessionWebSocketTask {
         let socket = URLSession.shared.webSocketTask(with: try request())
         socket.resume()
         if engine == .soniox {
-            var config: JSONValue = [
+            let config: JSONValue = [
                 "model": "stt-rt-v5",
                 "audio_format": "pcm_s16le",
                 "sample_rate": .number(CloudTranscriber.sampleRate),
@@ -280,7 +274,6 @@ struct CloudEndpoint: Sendable {
                 // Marks pauses with an "<end>" token, where a final event is cut.
                 "enable_endpoint_detection": true,
             ]
-            if diarize { config["enable_speaker_diarization"] = true }
             do {
                 try await socket.send(.string(String(decoding: try JSONEncoder().encode(config), as: UTF8.self)))
             } catch {
@@ -391,14 +384,12 @@ final class Uplink: @unchecked Sendable {
 /// Soniox replies carry new final tokens and the current non-final ones. Finals are held until a
 /// pause ("<end>") or the end of a sentence, then sent as one final event, like Apple's results.
 struct SonioxParser {
-    let speakers: TokenSpeakers?
     /// Session time where this connection's audio starts; Soniox times count from there.
     let offset: Double
     private var finals: [Token] = []
     private var partial: [Token] = []
 
-    init(speakers: TokenSpeakers?, offset: Double) {
-        self.speakers = speakers
+    init(offset: Double) {
         self.offset = offset
     }
 
@@ -422,12 +413,8 @@ struct SonioxParser {
                 continue
             }
             finals.append(token)
-            if let label = item["speaker"]?.string, let number = Int(label) {
-                speakers?.add(start: token.start, end: token.end, speaker: number - 1)
-            }
             if let last = text.last, "。？！?!".contains(last) { flush(into: &events) }
         }
-        if let processed = json["final_audio_proc_ms"]?.double { speakers?.cover(until: offset + processed / 1000) }
         let done = json["finished"] == .bool(true)
         if done { flush(into: &events) }
         if !finals.isEmpty || !partial.isEmpty { events.append(.volatile(finals + partial)) }
@@ -496,44 +483,6 @@ struct ElevenLabsParser {
     mutating func interrupted() -> [TranscriptEvent] {
         defer { partial = [] }
         return partial.isEmpty ? [] : [.final(partial)]
-    }
-}
-
-/// Speaker labels a cloud recognizer put on its words, kept by time so captions are attributed
-/// the same way as with the on-device diarizer.
-public final class TokenSpeakers: SpeakerSource, @unchecked Sendable {
-    private let lock = NSLock()
-    // Guarded by `lock`, in time order.
-    private var spans: [(start: Double, end: Double, speaker: Int)] = []
-    private var covered = 0.0
-
-    func add(start: Double, end: Double, speaker: Int) {
-        lock.withLock {
-            spans.append((start, end, speaker))
-            covered = max(covered, end)
-        }
-    }
-
-    func cover(until seconds: Double) {
-        lock.withLock { covered = max(covered, seconds) }
-    }
-
-    public var coveredUntil: Double { lock.withLock { covered } }
-
-    public var speakingNow: [Int] { [] }
-
-    public func attribute(start: Double, end: Double) -> SpeakerDiarizer.Attribution {
-        lock.withLock {
-            var totals: [Int: Double] = [:]
-            for span in spans.reversed() {
-                if span.end < start - 5 { break }
-                let overlap = min(span.end, end) - max(span.start, start)
-                // Zero-length words inside the line still count.
-                if overlap >= 0 { totals[span.speaker, default: 0] += max(overlap, 0.01) }
-            }
-            guard let best = totals.max(by: { $0.value < $1.value }) else { return .init(speaker: nil, share: 0) }
-            return .init(speaker: best.key, share: best.value / totals.values.reduce(0, +))
-        }
     }
 }
 

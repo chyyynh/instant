@@ -14,7 +14,6 @@ struct InstantApp: App {
 
     init() {
         let session = LiveSession()
-        session.speakerDiarizationEnabled = UserDefaults.standard.object(forKey: Pref.speakersEnabled) as? Bool ?? true
         session.engine = UserDefaults.standard.string(forKey: Pref.speechEngine).flatMap(SpeechEngine.init) ?? .apple
         session.apiKey = { APIKey.speech($0).load() }
         session.recordingEnabled = UserDefaults.standard.object(forKey: Pref.recordingEnabled) as? Bool ?? true

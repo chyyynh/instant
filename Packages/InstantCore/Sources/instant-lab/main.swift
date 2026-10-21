@@ -1,5 +1,3 @@
-import CoreML
-import FluidAudio
 import Foundation
 import InstantCore
 
@@ -7,11 +5,7 @@ import InstantCore
 //
 //   instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file]
 //                   [--engine apple|soniox|elevenLabs] [--ask question]
-//   instant-lab report <trace.jsonl> [truth.json]
-//   instant-lab reference <audio> --start s --duration s --out truth.json
-//
-// `reference` writes reference speaker turns for a clip using FluidAudio's offline VBx pipeline
-// (whole-clip context, far more accurate than streaming) — a stand-in for hand-labeled truth.
+//   instant-lab report <trace.jsonl>
 //
 // `run` writes a trace (default /tmp/instant-trace.jsonl) and prints the report. With --ask it then
 // asks Claude about the transcript (needs ANTHROPIC_API_KEY), the way the app's Claude panel does.
@@ -31,7 +25,6 @@ func run(_ args: [String]) async -> Int32 {
     let startAt = TimeInterval(option("--start", "0")) ?? 0
     let duration = TimeInterval(option("--duration", "0")) ?? 0
     let tracePath = option("--trace", "/tmp/instant-trace.jsonl")
-    let truthPath = option("--truth", "")
     let question = option("--ask", "")
     guard let engine = SpeechEngine(rawValue: option("--engine", "apple")) else { return usage() }
     let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
@@ -71,7 +64,7 @@ func run(_ args: [String]) async -> Int32 {
         "status": "\(session.status)",
         "lines": session.transcript.lines.map { ["id": $0.id, "source": $0.source, "translation": $0.translation ?? "", "final": $0.isFinal] as [String: any Sendable] },
     ])
-    report(tracePath, truth: truthPath.isEmpty ? nil : truthPath)
+    report(tracePath)
     if case .failed = session.status { return 1 }
     if !question.isEmpty { return await ask(question, about: session, client: ClaudeClient(apiKey: apiKey)) }
     return 0
@@ -83,8 +76,7 @@ func ask(_ question: String, about session: LiveSession, client: ClaudeClient) a
     print("\n? \(question)")
     let asked = ContinuousClock.now
     var firstText: Duration?
-    assistant.ask(question, captions: session.captions, pending: session.pendingText,
-                  speakerName: { "說話者 \(session.speakerName($0))" }, client: client)
+    assistant.ask(question, captions: session.captions, pending: session.pendingText, client: client)
     var printed = 0
     while assistant.isResponding {
         let text = assistant.messages.last?.text ?? ""
@@ -113,7 +105,7 @@ func usage() -> Int32 {
 
 // MARK: - Report
 
-func report(_ path: String, truth truthPath: String? = nil) {
+func report(_ path: String) {
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
         print("cannot read \(path)")
         return
@@ -174,56 +166,10 @@ func report(_ path: String, truth truthPath: String? = nil) {
     errors                   \(events.filter { ($0["stage"] as? String)?.hasSuffix(".error") == true }.count)
     ───────────────────────────────────────────────────────
     """)
-    let assigned = Dictionary(stage("spk.assign").compactMap { e in (e["id"] as? Int).map { ($0, e) } }, uniquingKeysWith: { _, last in last })
-    if !assigned.isEmpty || !stage("spk.start").isEmpty {
-        let speakers = assigned.values.compactMap { $0["speaker"] as? Int }
-        let counts = Dictionary(grouping: speakers.filter { $0 >= 0 }, by: { $0 }).mapValues(\.count).sorted { $0.key < $1.key }
-        print("""
-        speakers                 \(counts.map { "\(speakerLetter($0.key))×\($0.value)" }.joined(separator: " ")), \(speakers.filter { $0 < 0 }.count) unassigned; model load \(stage("spk.start").first?["load_ms"] as? Int ?? 0)ms
-        speaker wait             \(stats(assigned.values.compactMap { ($0["wait_ms"] as? Int).map { Double($0) / 1000 } })), \(assigned.values.filter { $0["covered"] as? Bool == false }.count) shown before diarization reached them
-        diarization lag          \(stats(stage("spk.update").compactMap { $0["lag"] as? Double })) behind audio; \(stage("spk.start").first.map { "\($0["model"] ?? "") on \($0["units"] ?? "")" } ?? "")
-        """)
-        if let truthPath, let accuracy = speakerAccuracy(assigned: Array(assigned.values), truthPath: truthPath) {
-            print("speaker accuracy         \(accuracy)")
-        }
-    }
     for line in finalLines {
-        let speaker = (line["id"] as? Int).flatMap { assigned[$0]?["speaker"] as? Int }.map { "[\(speakerLetter($0))] " } ?? ""
-        print("  \(speaker)\(line["translation"] as? String ?? "")")
+        print("  \(line["translation"] as? String ?? "")")
         print("    \(line["source"] as? String ?? "")")
     }
-}
-
-func speakerLetter(_ speaker: Int) -> String {
-    speaker < 0 ? "?" : String(UnicodeScalar(UInt8(65 + speaker)))
-}
-
-/// Compares assigned speakers with a ground-truth file of turns ({speaker, start, end}): each line
-/// takes the truth speaker it overlaps most; predicted slots map to the truth speaker they agree
-/// with most often (slot numbering is arbitrary).
-func speakerAccuracy(assigned: [[String: Any]], truthPath: String) -> String? {
-    guard let data = FileManager.default.contents(atPath: truthPath),
-          let turns = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return nil }
-    var pairs: [(predicted: Int, truth: String)] = []
-    for line in assigned {
-        guard let start = line["start"] as? Double, let end = line["end"] as? Double,
-              let predicted = line["speaker"] as? Int else { continue }
-        let overlaps = turns.map { turn -> (String, Double) in
-            let s = turn["start"] as? Double ?? 0, e = turn["end"] as? Double ?? 0
-            return (turn["speaker"] as? String ?? "?", max(0, min(end, e) - max(start, s)))
-        }
-        guard let best = overlaps.max(by: { $0.1 < $1.1 }), best.1 > 0 else { continue }
-        pairs.append((predicted, best.0))
-    }
-    guard !pairs.isEmpty else { return "no lines overlap the truth" }
-    var mapping: [Int: String] = [:]
-    for predicted in Set(pairs.map(\.predicted)) where predicted >= 0 {
-        let truths = pairs.filter { $0.predicted == predicted }.map(\.truth)
-        mapping[predicted] = Dictionary(grouping: truths, by: { $0 }).max { $0.value.count < $1.value.count }?.key
-    }
-    let correct = pairs.filter { mapping[$0.predicted] == $0.truth }.count
-    let detail = pairs.map { "\(speakerLetter($0.predicted))→\($0.truth)" }.joined(separator: " ")
-    return "\(correct)/\(pairs.count) lines (\(Int(Double(correct) / Double(pairs.count) * 100))%) · \(detail)"
 }
 
 func fmt(_ value: Double) -> String { String(format: "%.2f", value) }
@@ -235,56 +181,9 @@ func stats(_ values: [Double], unit: String = "s") -> String {
     return "median \(fmt(p(0.5)))\(unit), p90 \(fmt(p(0.9)))\(unit), max \(fmt(sorted.last!))\(unit)"
 }
 
-func reference(_ args: [String]) async -> Int32 {
-    var args = args
-    func option(_ name: String, _ fallback: String) -> String {
-        guard let i = args.firstIndex(of: name), i + 1 < args.count else { return fallback }
-        defer { args.removeSubrange(i...i + 1) }
-        return args[i + 1]
-    }
-    let start = Double(option("--start", "0")) ?? 0
-    let duration = Double(option("--duration", "0")) ?? 0
-    let out = option("--out", "/tmp/instant-reference.json")
-    guard let path = args.first else { return usage() }
-    do {
-        let samples = try AudioConverter().resampleAudioFile(path: path)
-        let from = min(samples.count, Int(start * 16_000))
-        let to = duration > 0 ? min(samples.count, from + Int(duration * 16_000)) : samples.count
-        let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
-        try await manager.prepareModels()
-        let result = try await manager.process(audio: Array(samples[from..<to]))
-        // Times relative to the clip start, matching a session that starts playing at `start`.
-        let turns = result.segments.map { segment in
-            ["speaker": segment.speakerId, "start": Double(segment.startTimeSeconds), "end": Double(segment.endTimeSeconds)] as [String: Any]
-        }
-        let data = try JSONSerialization.data(withJSONObject: turns, options: [.prettyPrinted])
-        try data.write(to: URL(fileURLWithPath: out))
-        let speakers = Set(turns.compactMap { $0["speaker"] as? String })
-        print("\(turns.count) turns, speakers \(speakers.sorted()) → \(out)")
-        return 0
-    } catch {
-        print("reference failed: \(error)")
-        return 1
-    }
-}
-
-/// Times Sortformer model loading per compute-unit choice (each loaded twice).
-func loadBench() async -> Int32 {
-    for (name, units) in [("all", MLComputeUnits.all), ("cpuAndGPU", .cpuAndGPU), ("cpuAndNeuralEngine", .cpuAndNeuralEngine), ("cpuOnly", .cpuOnly)] {
-        for attempt in 1...2 {
-            let start = ContinuousClock.now
-            _ = try? await SortformerModels.loadFromHuggingFace(config: .default, computeUnits: units)
-            print("\(name) #\(attempt): \(fmt(Trace.seconds(ContinuousClock.now - start)))s")
-        }
-    }
-    return 0
-}
-
 let arguments = Array(CommandLine.arguments.dropFirst())
 switch arguments.first {
 case "run": exit(await run(Array(arguments.dropFirst())))
-case "reference": exit(await reference(Array(arguments.dropFirst())))
-case "loadbench": exit(await loadBench())
-case "report" where arguments.count > 1: report(arguments[1], truth: arguments.count > 2 ? arguments[2] : nil); exit(0)
+case "report" where arguments.count > 1: report(arguments[1]); exit(0)
 default: exit(usage())
 }

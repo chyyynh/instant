@@ -29,12 +29,10 @@ struct TranscriptView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 // Captions never change once shown, so equal rows skip re-rendering. Caption ids
-                // are their indices (append-only), so the previous caption is captions[i - 1].
+                // are their indices (append-only).
                 ForEach(captions.indices, id: \.self) { index in
                     let line = captions[index]
-                    let newSpeaker = line.speaker != nil && (index == 0 || captions[index - 1].speaker != line.speaker)
                     CaptionRow(translation: line.translation ?? "", original: showOriginal ? line.source : nil, points: points,
-                               speaker: newSpeaker ? line.speaker.map { CaptionRow.Speaker(name: session.displayName(of: $0), color: session.speakerColor($0)) } : nil,
                                asked: asked[index])
                         .equatable()
                         .opacity(index < captions.count - Self.recentCount && highlighted != index && playing != index && ui.player == nil ? 0.55 : 1)
@@ -51,11 +49,6 @@ struct TranscriptView: View {
                         .contextMenu {
                             if let player = ui.player, !session.status.isActive {
                                 Button("從這裡播放", systemImage: "play") { player.play(from: max(line.start - 0.3, 0)) }
-                            }
-                            if let speaker = line.speaker {
-                                Button("重新命名「\(session.displayName(of: speaker))」…", systemImage: "pencil") {
-                                    ui.rename(speaker, in: session)
-                                }
                             }
                             Button("拷貝", systemImage: "doc.on.doc") {
                                 copy("\(line.translation ?? "")\n\(line.source)")
@@ -150,27 +143,16 @@ struct TranscriptView: View {
     }
 }
 
-/// A shown caption: translation, with the original underneath; speaker name when it changes.
+/// A shown caption: translation, with the original underneath.
 struct CaptionRow: View, Equatable {
-    struct Speaker: Equatable {
-        let name: String
-        let color: Color
-    }
-
     let translation: String
     let original: String?
     let points: Double
-    let speaker: Speaker?
     /// Questions asked to Claude right after this caption.
     let asked: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let speaker {
-                SpeakerLabel(name: speaker.name, color: speaker.color)
-                    .font(.caption.weight(.semibold))
-                    .padding(.top, 6)
-            }
             Text(translation)
                 .font(CaptionMetrics.translationFont(points))
             if let original {

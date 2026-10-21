@@ -45,9 +45,6 @@ struct ContentView: View {
                 // Room for captions when the inspector opens: the window widens instead.
                 .frame(minWidth: 420, minHeight: 360)
                 #endif
-                #if os(iOS)
-                .safeAreaBar(edge: .top) { speakerChips }
-                #endif
         }
         #if os(macOS)
         .inspector(isPresented: $ui.inspectorShown) {
@@ -66,7 +63,6 @@ struct ContentView: View {
         .sheet(isPresented: $ui.assistantShown) { AssistantSheet() }
         .sheet(isPresented: $ui.libraryShown) { LibraryView() }
         #endif
-        .renameSpeakerAlert()
         .unsavedRecordingDialog()
         .onChange(of: session.recording, initial: true) {
             ui.player?.stop()
@@ -100,9 +96,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let fraction = session.speakerModelDownload {
-            SpeakerDownloadView(fraction: fraction)
-        } else if !session.captions.isEmpty || !session.pendingText.isEmpty {
+        if !session.captions.isEmpty || !session.pendingText.isEmpty {
             TranscriptView(points: points, showOriginal: showOriginal)
         } else {
             switch session.status {
@@ -113,7 +107,7 @@ struct ContentView: View {
                 ContentUnavailableView {
                     Label("準備中…", systemImage: "hourglass")
                 } description: {
-                    Text("第一次使用時，可能要下載語言包或模型。")
+                    Text("第一次使用時，可能要下載語言包。")
                 }
             case .running:
                 ContentUnavailableView {
@@ -126,24 +120,17 @@ struct ContentView: View {
         }
     }
 
-    /// "聆聽中 · Mac 聲音 · 04:12 · 3 位說話者", the step while preparing, or the input when idle.
+    /// "聆聽中 · Mac 聲音 · 04:12", the step while preparing, or the input when idle.
     private var subtitle: Text {
         switch session.status {
         case .preparing(let message):
             return Text(message)
         case .running:
             let elapsed = session.startedAt.map { Duration.seconds(max(0, now.timeIntervalSince($0)).rounded(.down)).formatted(.time(pattern: .minuteSecond)) } ?? ""
-            let count = session.speakers.count
-            return count > 0
-                ? Text("聆聽中 · \(session.sourceDescription) · \(elapsed) · \(count) 位說話者")
-                : Text("聆聽中 · \(session.sourceDescription) · \(elapsed)")
+            return Text("聆聽中 · \(session.sourceDescription) · \(elapsed)")
         case .idle, .failed:
             if let recording = session.recording, !session.captions.isEmpty {
-                let count = session.speakers.count
-                let duration = PlaybackBar.format(recording.duration)
-                return count > 0
-                    ? Text("已停止 · \(session.sourceDescription) · \(duration) · \(count) 位說話者")
-                    : Text("已停止 · \(session.sourceDescription) · \(duration)")
+                return Text("已停止 · \(session.sourceDescription) · \(PlaybackBar.format(recording.duration))")
             }
             return Text("\(session.inputName) · \(session.engine.isCloud ? "\(session.engine.name) 雲端辨識" : "裝置上處理")")
         }
@@ -174,14 +161,6 @@ struct ContentView: View {
     private var toolbar: some ToolbarContent {
         #if os(macOS)
         ToolbarItemGroup {
-            Button("說話者", systemImage: session.speakerDiarizationEnabled ? "person.2" : "person.2.slash") {
-                ui.speakersShown.toggle()
-            }
-            .help("說話者清單，以及是否用聲音區分說話者")
-            .popover(isPresented: Bindable(ui).speakersShown, arrowEdge: .bottom) {
-                SpeakerInspector()
-                    .frame(width: 300, height: 380)
-            }
             if LiveSession.Input.available.count > 1 {
                 InputMenu()
             }
@@ -223,30 +202,6 @@ struct ContentView: View {
         }
         #endif
     }
-
-    #if os(iOS)
-    /// Everyone heard so far; tap to rename.
-    @ViewBuilder
-    private var speakerChips: some View {
-        let speakers = session.speakers
-        if !speakers.isEmpty {
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    ForEach(speakers) { speaker in
-                        Button { ui.rename(speaker.id, in: session) } label: {
-                            SpeakerLabel(name: speaker.name, color: speaker.color)
-                                .foregroundStyle(.primary)
-                        }
-                        .buttonStyle(.glass)
-                    }
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 6)
-            }
-            .scrollIndicators(.hidden)
-        }
-    }
-    #endif
 }
 
 /// Before anything has been heard: one big start button.
@@ -291,36 +246,6 @@ private struct IdleView: View {
         #else
         return "把手機放在說話的人附近，\(spoken)會即時翻成\(target)字幕。"
         #endif
-    }
-}
-
-/// First use with speakers on: the speaker model is downloading.
-private struct SpeakerDownloadView: View {
-    @Environment(LiveSession.self) private var session
-    let fraction: Double
-
-    var body: some View {
-        ContentUnavailableView {
-            Label("下載說話者辨識模型", systemImage: "person.2")
-        } description: {
-            Text("只有第一次需要，約 \(LiveSession.speakerModelMegabytes) MB。下載後在這台裝置上分辨最多 4 位說話者，聲音不會上傳。")
-        } actions: {
-            VStack(spacing: 16) {
-                ProgressView(value: fraction) {
-                    EmptyView()
-                } currentValueLabel: {
-                    Text("\(Int(fraction * Double(LiveSession.speakerModelMegabytes))) MB / \(LiveSession.speakerModelMegabytes) MB")
-                        .monospacedDigit()
-                }
-                .frame(maxWidth: 300)
-                Button("這次先不分辨說話者，直接開始") { session.skipSpeakerDiarization() }
-                    #if os(macOS)
-                    .buttonStyle(.link)
-                    #else
-                    .buttonStyle(.borderless)
-                    #endif
-            }
-        }
     }
 }
 
@@ -435,15 +360,6 @@ extension LiveSession {
                 set: {
                     self.recordingEnabled = $0
                     UserDefaults.standard.set($0, forKey: Pref.recordingEnabled)
-                })
-    }
-
-    /// The speaker toggle, remembered across launches.
-    var speakersEnabledBinding: Binding<Bool> {
-        Binding(get: { self.speakerDiarizationEnabled },
-                set: {
-                    self.speakerDiarizationEnabled = $0
-                    UserDefaults.standard.set($0, forKey: Pref.speakersEnabled)
                 })
     }
 

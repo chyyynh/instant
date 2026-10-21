@@ -21,9 +21,6 @@ struct SettingsView: View {
             Tab("字幕", systemImage: "captions.bubble", value: "captions") {
                 Form { CaptionSettings() }.formStyle(.grouped)
             }
-            Tab("說話者", systemImage: "person.2", value: "speakers") {
-                Form { SpeakerSettings() }.formStyle(.grouped)
-            }
             Tab("AI", systemImage: "sparkles", value: "ai") {
                 Form { AssistantSettings() }.formStyle(.grouped)
             }
@@ -72,7 +69,6 @@ struct SettingsSheet: View {
                 Section { RecordingToggle() }
                 RecognitionSettings()
                 CaptionSettings()
-                SpeakerSettings()
                 AssistantSettings()
             }
             .navigationTitle("設定")
@@ -119,8 +115,8 @@ private struct RecognitionSettings: View {
         } footer: {
             switch engine {
             case .apple: Text("在這台裝置上辨識，不需要網路，聲音不會離開裝置。")
-            case .soniox: Text("聲音會即時上傳到 Soniox 辨識，說話者也由 Soniox 分辨。約 US$0.18／小時。")
-            case .elevenLabs: Text("聲音會即時上傳到 ElevenLabs（Scribe v2 Realtime）辨識；說話者仍在這台裝置上分辨。約 US$0.39／小時。")
+            case .soniox: Text("聲音會即時上傳到 Soniox 辨識。約 US$0.18／小時。")
+            case .elevenLabs: Text("聲音會即時上傳到 ElevenLabs（Scribe v2 Realtime）辨識。約 US$0.39／小時。")
             }
         }
         if engine.isCloud {
@@ -197,24 +193,3 @@ private struct CaptionSettings: View {
     }
 }
 
-private struct SpeakerSettings: View {
-    @Environment(LiveSession.self) private var session
-
-    var body: some View {
-        Section {
-            Toggle(isOn: session.speakersEnabledBinding) {
-                Text("區分說話者")
-                Text(session.engine.diarizes ? "分辨最多 4 位說話者" : "用聲音分辨最多 4 位說話者，在這台裝置上處理")
-            }
-            .disabled(session.status.isActive)
-        } header: {
-            Text("說話者")
-        } footer: {
-            Text(session.status.isActive
-                 ? "停止後才能切換。"
-                 : session.engine.diarizes
-                 ? "使用 Soniox 時由 Soniox 分辨說話者。"
-                 : "第一次使用會下載約 \(LiveSession.speakerModelMegabytes) MB 的模型。")
-        }
-    }
-}

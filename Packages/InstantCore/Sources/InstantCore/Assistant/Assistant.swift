@@ -36,8 +36,8 @@ public final class Assistant {
 
     public static let system = """
     使用者正在聽一段外語的對話（會議、課程、影片或面對面交談），一邊和你討論。\
-    每則訊息開頭的 <transcript> 是從上一則訊息之後新增的逐字稿：時間、說話者、原文與機器翻譯。\
-    逐字稿是即時語音辨識加上機器翻譯，可能有聽錯、斷句錯誤或翻譯不準的地方；說話者是用聲音自動區分的，也可能標錯。\
+    每則訊息開頭的 <transcript> 是從上一則訊息之後新增的逐字稿：時間、原文與機器翻譯。\
+    逐字稿是即時語音辨識加上機器翻譯，可能有聽錯、斷句錯誤或翻譯不準的地方。\
     需要時根據原文判斷，並在重要的地方指出可能的誤聽或誤譯。標示「還在說」的內容尚未定稿，之後的逐字稿可能會重複出現。
 
     用繁體中文回答。使用者正在聽對話，只能瞄一眼：先給結論，預設最多三到五個短重點，不要分段標題；使用者要求詳細時再展開。
@@ -45,9 +45,8 @@ public final class Assistant {
 
     public init() {}
 
-    /// Asks `question` about the session so far. `speakerName` names a diarized speaker slot.
-    public func ask(_ question: String, captions: [Line], pending: String,
-                    speakerName: (Int) -> String, client: ClaudeClient) {
+    /// Asks `question` about the session so far.
+    public func ask(_ question: String, captions: [Line], pending: String, client: ClaudeClient) {
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isResponding else { return }
         // The captions were cleared since: what Claude saw is gone, so start over.
@@ -55,7 +54,7 @@ public final class Assistant {
         errorMessage = nil
 
         let fresh = captions[sentCaptions...]
-        let turn = Self.turn(question: question, captions: fresh, pending: pending, speakerName: speakerName)
+        let turn = Self.turn(question: question, captions: fresh, pending: pending)
         let userMessage = Message(id: messages.count, role: .user, text: question, captionCount: captions.count)
         let reply = Message(id: messages.count + 1, role: .assistant, text: "")
         messages += [userMessage, reply]
@@ -90,14 +89,14 @@ public final class Assistant {
 
     /// Asks the last question again, with the captions as they are now. Only the last exchange
     /// can be redone: taking it out leaves the conversation before it untouched.
-    public func retryLast(captions: [Line], pending: String, speakerName: (Int) -> String, client: ClaudeClient) {
+    public func retryLast(captions: [Line], pending: String, client: ClaudeClient) {
         guard canRetry, let before = beforeLast, messages.count >= 2, messages[messages.count - 2].role == .user else { return }
         let question = messages[messages.count - 2].text
         messages.removeLast(2)
         history = before.history
         sentCaptions = before.sentCaptions
         beforeLast = nil
-        ask(question, captions: captions, pending: pending, speakerName: speakerName, client: client)
+        ask(question, captions: captions, pending: pending, client: client)
     }
 
     /// Stops the reply in progress; the question is dropped, so the conversation stays as it was.
@@ -135,16 +134,11 @@ public final class Assistant {
     }
 
     /// One user turn: the new transcript, then the question.
-    static func turn(question: String, captions: ArraySlice<Line>, pending: String, speakerName: (Int) -> String) -> String {
+    static func turn(question: String, captions: ArraySlice<Line>, pending: String) -> String {
         var lines: [String] = []
-        var previous: Int?
         for line in captions {
             let time = Duration.seconds(line.start.rounded(.down)).formatted(.time(pattern: .minuteSecond))
-            let speaker = line.speaker.map(speakerName) ?? "?"
-            // The speaker only when it changes, like a script.
-            let header = line.speaker != nil && line.speaker == previous ? "" : "\(speaker)："
-            previous = line.speaker
-            lines.append("[\(time)] \(header)\(line.source)")
+            lines.append("[\(time)] \(line.source)")
             if let translation = line.translation, !translation.isEmpty { lines.append("　譯：\(translation)") }
         }
         let pending = pending.trimmingCharacters(in: .whitespacesAndNewlines)

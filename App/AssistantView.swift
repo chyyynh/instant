@@ -46,17 +46,15 @@ struct APIKey {
 }
 
 extension Assistant {
-    /// Asks about everything captioned so far, with speakers by the names shown on screen.
+    /// Asks about everything captioned so far.
     func ask(_ question: String, session: LiveSession, ui: AppUI) {
         guard let apiKey = ui.apiKey else { return }
-        ask(question, captions: session.captions, pending: session.pendingText,
-            speakerName: { session.displayName(of: $0) }, client: ClaudeClient(apiKey: apiKey))
+        ask(question, captions: session.captions, pending: session.pendingText, client: ClaudeClient(apiKey: apiKey))
     }
 
     func retryLast(session: LiveSession, ui: AppUI) {
         guard let apiKey = ui.apiKey else { return }
-        retryLast(captions: session.captions, pending: session.pendingText,
-                  speakerName: { session.displayName(of: $0) }, client: ClaudeClient(apiKey: apiKey))
+        retryLast(captions: session.captions, pending: session.pendingText, client: ClaudeClient(apiKey: apiKey))
     }
 }
 
@@ -218,15 +216,14 @@ private struct MessageRow: View {
         }
     }
 
-    /// Where in the captions the question was asked: "到 02:09 · 田中 ›", tapping shows that caption.
+    /// Where in the captions the question was asked: "到 02:09 ›", tapping shows that caption.
     @ViewBuilder
     private var scope: some View {
         let index = message.captionCount - 1
         if session.captions.indices.contains(index) {
             let line = session.captions[index]
             let time = Duration.seconds(line.start.rounded(.down)).formatted(.time(pattern: .minuteSecond))
-            let speaker = line.speaker.map { " · \(session.displayName(of: $0))" } ?? ""
-            Button("到 \(time)\(speaker) ›") { ui.revealedCaption = index }
+            Button("到 \(time) ›") { ui.revealedCaption = index }
                 .buttonStyle(.plain)
                 .font(.caption2)
                 .foregroundStyle(.tint)

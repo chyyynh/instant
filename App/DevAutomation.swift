@@ -17,13 +17,12 @@ import ScreenCaptureKit
 /// - INSTANT_DEMO_AUDIO=<file> plays a file instead of listening; INSTANT_DEMO_START=<s> skips into
 ///   it, INSTANT_DEMO_SPEED=<rate> plays it faster, INSTANT_DEMO_DELAY=<s> waits before starting.
 /// - INSTANT_INPUT=system starts listening to Mac audio instead.
-/// - INSTANT_DEMO_UI=1 shows a canned listening state (a meeting with three speakers) without
-///   running the pipeline, e.g. in the Simulator, which has no speech recognition.
-/// - INSTANT_SKIP_SPEAKERS_AT=<s> presses "這次先不分辨說話者" that long after launch.
+/// - INSTANT_DEMO_UI=1 shows a canned listening state (a short meeting) without running the
+///   pipeline, e.g. in the Simulator, which has no speech recognition.
 /// - Mac: INSTANT_SNAPSHOT=<prefix> with INSTANT_SNAPSHOT_AT=<s,s,…> captures the main window, plus
 ///   the floating captions (-overlay), Settings (-settings) and the menu bar window (-menubar) when
-///   open, and writes the transcript as .txt. INSTANT_INSPECTOR=1 (the Claude panel; INSTANT_ASSISTANT=1 also fills it with a canned chat under INSTANT_DEMO_UI; INSTANT_REVEAL=n then shows caption n as if its time were clicked), INSTANT_SPEAKERS=1 (the speaker popover), INSTANT_OVERLAY=1 and
-///   INSTANT_SETTINGS=1 open those first (INSTANT_SETTINGS_TAB=recognition|captions|speakers|ai picks the tab); INSTANT_MENUBAR=1 shows the menu bar window's content in a
+///   open, and writes the transcript as .txt. INSTANT_INSPECTOR=1 (the Claude panel; INSTANT_ASSISTANT=1 also fills it with a canned chat under INSTANT_DEMO_UI; INSTANT_REVEAL=n then shows caption n as if its time were clicked), INSTANT_OVERLAY=1 and
+///   INSTANT_SETTINGS=1 open those first (INSTANT_SETTINGS_TAB=recognition|captions|ai picks the tab); INSTANT_MENUBAR=1 shows the menu bar window's content in a
 ///   stand-in window. INSTANT_APPEARANCE=dark|light.
 /// - INSTANT_DEMO_STOP_AT=<s> stops listening that long after launch; then INSTANT_PLAY_AT=<s> plays
 ///   the recording from there and INSTANT_SAVE=1 opens the save sheet (=now saves it right away). INSTANT_LIBRARY=1 opens the
@@ -38,7 +37,6 @@ enum DevAutomation {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
         if env["INSTANT_INSPECTOR"] == "1" || env["INSTANT_ASSISTANT"] == "1" { ui.inspectorShown = true }
-        if env["INSTANT_SPEAKERS"] == "1" { ui.speakersShown = true }
         if env["INSTANT_OVERLAY"] == "1" { ui.overlayShown = true }
         if env["INSTANT_SETTINGS"] == "1" { openSettings() }
         if env["INSTANT_MENUBAR"] == "1" { openMenuBarPreview(session: session, ui: ui) }
@@ -59,25 +57,18 @@ enum DevAutomation {
             }
         }
         #endif
-        if let skipAt = env["INSTANT_SKIP_SPEAKERS_AT"].flatMap(Double.init) {
-            Task {
-                try? await Task.sleep(for: .seconds(skipAt))
-                session.skipSpeakerDiarization()
-            }
-        }
         if env["INSTANT_DEMO_UI"] == "1" {
             // A canned meeting, for checking the listening UI without speech recognition.
-            session.speakerNames = [0: "田中"]
             session.showDemoState(captions: [
-                (0, "佐藤さん、昨日の件なんですけど、結局先方には連絡したんですか。", "佐藤，關於昨天的事，你最後有聯絡對方嗎？"),
-                (1, "いや、まだです。ちょっとバタバタしてて。", "不，還沒。最近有點手忙腳亂的。"),
-                (0, "じゃあ今日中にお願いできますか。", "那今天之內可以拜託你嗎？"),
-                (0, "ちなみにあれって来週のリリースに間に合いそうですか。", "順帶一提，那個趕得上下週的發布嗎？"),
-                (2, "正直厳しいですね。テストはまだ半分くらいです。", "老實說有點難，測試大概只做完一半。"),
+                ("佐藤さん、昨日の件なんですけど、結局先方には連絡したんですか。", "佐藤，關於昨天的事，你最後有聯絡對方嗎？"),
+                ("いや、まだです。ちょっとバタバタしてて。", "不，還沒。最近有點手忙腳亂的。"),
+                ("じゃあ今日中にお願いできますか。", "那今天之內可以拜託你嗎？"),
+                ("ちなみにあれって来週のリリースに間に合いそうですか。", "順帶一提，那個趕得上下週的發布嗎？"),
+                ("正直厳しいですね。テストはまだ半分くらいです。", "老實說有點難，測試大概只做完一半。"),
             ], pending: "じゃあ来週の月曜にもう一回確認しましょう", draft: nil, elapsed: 134)
             if env["INSTANT_ASSISTANT"] == "1" {
                 assistant.showDemo([
-                    ("整理目前的重點", "- **聯絡對方**：佐藤還沒聯絡，田中請他**今天之內**處理。\n- **下週發布**：田中問趕不趕得上，還沒有人回答。", 4),
+                    ("整理目前的重點", "- **聯絡對方**：佐藤還沒聯絡，被要求**今天之內**處理。\n- **下週發布**：測試只做完一半，趕不趕得上還沒定。", 4),
                     ("我可以怎麼回應？", "可以先確認範圍：「テストの残りはどのくらいかかりそうですか？」（剩下的測試大概要多久？）\n再看要不要延後發布。", 5),
                 ])
             }
@@ -124,10 +115,7 @@ enum DevAutomation {
             "tail": transcript.volatile,
         ])
         // What's on screen: captions, then the pending (not yet translated) text.
-        var text = session.captions.map { line in
-            let speaker = line.speaker.map { "[\(session.speakerName($0))] " } ?? ""
-            return "\(speaker)\(line.translation ?? "")\n  \(line.source)"
-        }.joined(separator: "\n")
+        var text = session.captions.map { "\($0.translation ?? "")\n  \($0.source)" }.joined(separator: "\n")
         if !transcript.pendingText.isEmpty {
             text += "\n…  \(transcript.pendingText)"
         }

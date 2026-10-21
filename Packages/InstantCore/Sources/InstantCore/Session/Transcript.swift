@@ -11,8 +11,6 @@ public struct Line: Identifiable, Sendable, Equatable {
     /// estimated to about a second for in-progress ones (see `LiveTranscriber`).
     public var start: TimeInterval = 0
     public var end: TimeInterval = 0
-    /// Diarized speaker slot, set when the line becomes a caption.
-    public var speaker: Int?
 }
 
 /// The running transcript, split into segments.
