@@ -81,7 +81,7 @@ struct MenuBarContent: View {
 
     private var listening: Binding<Bool> {
         Binding(get: { session.status.isActive },
-                set: { on in Task { on ? await session.start() : await session.stop() } })
+                set: { on in if on { ui.start(session) } else { Task { await session.stop() } } })
     }
 
     private var overlay: Binding<Bool> {

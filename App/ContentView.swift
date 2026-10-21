@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(LiveSession.self) private var session
     @Environment(AppUI.self) private var ui
     @Environment(Assistant.self) private var assistant
+    @Environment(Library.self) private var library
     @AppStorage(Pref.captionPoints) private var captionPoints = CaptionMetrics.standard
     @AppStorage(Pref.showOriginal) private var showOriginal = true
     /// Ticks every second while listening, so the elapsed time in the subtitle advances (the
@@ -13,6 +14,7 @@ struct ContentView: View {
     @State private var now = Date.now
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     #else
     @ScaledMetric(relativeTo: .title2) private var typeScale = 1.0
     @State private var settingsShown = false
@@ -62,8 +64,15 @@ struct ContentView: View {
         #else
         .sheet(isPresented: $settingsShown) { SettingsSheet() }
         .sheet(isPresented: $ui.assistantShown) { AssistantSheet() }
+        .sheet(isPresented: $ui.libraryShown) { LibraryView() }
         #endif
         .renameSpeakerAlert()
+        .unsavedRecordingDialog()
+        .onChange(of: session.recording, initial: true) {
+            ui.player?.stop()
+            ui.player = session.recording.map { Player(url: $0.url) }
+            ui.savedListening = nil
+        }
         .animation(.smooth(duration: 0.3), value: session.status.isActive)
         .task(id: session.status == .running) {
             while session.status == .running, !Task.isCancelled {
@@ -79,9 +88,11 @@ struct ContentView: View {
         #if DEBUG
         .task {
             #if os(macOS)
-            await DevAutomation.run(session: session, ui: ui, assistant: assistant, openSettings: { openSettings() })
+            await DevAutomation.run(session: session, ui: ui, assistant: assistant, library: library, openSettings: { openSettings() },
+                                    openLibrary: { openWindow(id: WindowID.library) })
             #else
-            await DevAutomation.run(session: session, ui: ui, assistant: assistant, openSettings: { settingsShown = true })
+            await DevAutomation.run(session: session, ui: ui, assistant: assistant, library: library, openSettings: { settingsShown = true },
+                                    openLibrary: { ui.libraryShown = true })
             #endif
         }
         #endif
@@ -127,7 +138,14 @@ struct ContentView: View {
                 ? Text("聆聽中 · \(session.sourceDescription) · \(elapsed) · \(count) 位說話者")
                 : Text("聆聽中 · \(session.sourceDescription) · \(elapsed)")
         case .idle, .failed:
-            return Text("\(session.inputName) · 裝置上處理")
+            if let recording = session.recording, !session.captions.isEmpty {
+                let count = session.speakers.count
+                let duration = PlaybackBar.format(recording.duration)
+                return count > 0
+                    ? Text("已停止 · \(session.sourceDescription) · \(duration) · \(count) 位說話者")
+                    : Text("已停止 · \(session.sourceDescription) · \(duration)")
+            }
+            return Text("\(session.inputName) · \(session.engine.isCloud ? "\(session.engine.name) 雲端辨識" : "裝置上處理")")
         }
     }
 
@@ -144,6 +162,9 @@ struct ContentView: View {
             }
             if session.status == .running, !session.captions.isEmpty || !session.pendingText.isEmpty {
                 LiveCard(points: points)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if !session.status.isActive, let player = ui.player, !session.captions.isEmpty {
+                RecordingCard(player: player)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -169,6 +190,10 @@ struct ContentView: View {
                 .help("在所有視窗上方顯示字幕")
         }
         ToolbarItem {
+            Button("聆聽紀錄", systemImage: "clock") { openWindow(id: WindowID.library) }
+                .help("儲存過的聆聽")
+        }
+        ToolbarItem {
             Toggle("和 Claude 討論", systemImage: "sparkles", isOn: Bindable(ui).inspectorShown)
                 .toggleStyle(.button)
                 .help("邊聽邊問 Claude 關於這段對話")
@@ -182,6 +207,9 @@ struct ContentView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button("設定", systemImage: "gearshape") { settingsShown = true }
+        }
+        ToolbarItem(placement: .topBarLeading) {
+            Button("聆聽紀錄", systemImage: "clock") { ui.libraryShown = true }
         }
         if let transport = TransportButton.Kind(session: session, idleShowsButton: !session.captions.isEmpty) {
             ToolbarItem(placement: .bottomBar) { CaptionSizeMenu() }
@@ -314,13 +342,15 @@ struct TransportButton: View {
     }
 
     @Environment(LiveSession.self) private var session
+    @Environment(AppUI.self) private var ui
     let kind: Kind
 
     var body: some View {
         switch kind {
         case .start:
-            Button { Task { await session.start() } } label: {
-                Label("開始", systemImage: "mic.fill")
+            Button { ui.start(session) } label: {
+                Label(session.recording != nil ? "新的聆聽" : "開始", systemImage: "mic.fill")
+                    .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.glassProminent)
             .tint(.red)
@@ -395,15 +425,34 @@ private struct CaptionSizeMenu: View {
 enum WindowID {
     static let main = "main"
     static let overlay = "overlay"
+    static let library = "library"
 }
 
 extension LiveSession {
+    /// Recording, remembered across launches.
+    var recordingEnabledBinding: Binding<Bool> {
+        Binding(get: { self.recordingEnabled },
+                set: {
+                    self.recordingEnabled = $0
+                    UserDefaults.standard.set($0, forKey: Pref.recordingEnabled)
+                })
+    }
+
     /// The speaker toggle, remembered across launches.
     var speakersEnabledBinding: Binding<Bool> {
         Binding(get: { self.speakerDiarizationEnabled },
                 set: {
                     self.speakerDiarizationEnabled = $0
                     UserDefaults.standard.set($0, forKey: Pref.speakersEnabled)
+                })
+    }
+
+    /// The recognition engine, remembered across launches.
+    var engineBinding: Binding<SpeechEngine> {
+        Binding(get: { self.engine },
+                set: {
+                    self.engine = $0
+                    UserDefaults.standard.set($0.rawValue, forKey: Pref.speechEngine)
                 })
     }
 }

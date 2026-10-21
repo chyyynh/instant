@@ -12,14 +12,17 @@
 		22A3CC44272915EEEF0D415D /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88F8C7BD56A062D128D9B9C7 /* TranscriptView.swift */; };
 		3B41FB3C886E1985534D3CD4 /* LanguageMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D3CA0877D75B65B9A930665 /* LanguageMenu.swift */; };
 		44A0D0006F92F9EB602B8D21 /* Commands.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A6CB3BA6399A51B07CF8B5 /* Commands.swift */; };
+		ABB506FD175E6F7B9EB7943A /* PlaybackViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE606314CB675D017F4EB425 /* PlaybackViews.swift */; };
 		BAC86EE6F9DCAC46836133D5 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A81112560118D24B20B412C /* AssistantView.swift */; };
 		C01164A251B35C78F6E8AA29 /* OverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAB4A2D07C668E5D558A2C5A /* OverlayWindow.swift */; };
 		C5409880531EE6CA383EFBE4 /* DevAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD812F102E9F1051447383C /* DevAutomation.swift */; };
 		E0D9C1563F2E69A4B1B8AA08 /* MenuBarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 405004CE415A8F34B426EBB7 /* MenuBarContent.swift */; };
+		E1CB0CF05221456E278840F8 /* Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = F770DD89C73E549254120FD7 /* Library.swift */; };
 		E4CB1C989E0A300AF3968FC7 /* InstantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F40C58569389C616E5EBDF /* InstantApp.swift */; };
 		E75FC5320010DEC60C7F28A1 /* InstantCore in Frameworks */ = {isa = PBXBuildFile; productRef = A238C5A6C5989A0A8F10EAB7 /* InstantCore */; };
 		EF641469B7FEF998FE201E0C /* SpeakerInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2A68A0D2C801215292F73AB /* SpeakerInspector.swift */; };
 		F848B62826E515CDCDD693C5 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4337CB201DB2981FAA23F70F /* AppState.swift */; };
+		F8ECD2915243264AE1165754 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47372E1B877680C90D177F09 /* LibraryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +31,7 @@
 		3D3CA0877D75B65B9A930665 /* LanguageMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageMenu.swift; sourceTree = "<group>"; };
 		405004CE415A8F34B426EBB7 /* MenuBarContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContent.swift; sourceTree = "<group>"; };
 		4337CB201DB2981FAA23F70F /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		47372E1B877680C90D177F09 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		63CC483FCE2C36648F15AB40 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		69F40C58569389C616E5EBDF /* InstantApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstantApp.swift; sourceTree = "<group>"; };
 		7A81112560118D24B20B412C /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
@@ -35,8 +39,10 @@
 		ABD812F102E9F1051447383C /* DevAutomation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevAutomation.swift; sourceTree = "<group>"; };
 		BAB4A2D07C668E5D558A2C5A /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
 		CC6B516380E8F98BC82433B6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		CE606314CB675D017F4EB425 /* PlaybackViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackViews.swift; sourceTree = "<group>"; };
 		E2A68A0D2C801215292F73AB /* SpeakerInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerInspector.swift; sourceTree = "<group>"; };
 		F0A6CB3BA6399A51B07CF8B5 /* Commands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Commands.swift; sourceTree = "<group>"; };
+		F770DD89C73E549254120FD7 /* Library.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
 		FCEBCF4897B72E9D4ABCC834 /* InstantCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = InstantCore; path = Packages/InstantCore; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -88,8 +94,11 @@
 				CC6B516380E8F98BC82433B6 /* Info.plist */,
 				69F40C58569389C616E5EBDF /* InstantApp.swift */,
 				3D3CA0877D75B65B9A930665 /* LanguageMenu.swift */,
+				F770DD89C73E549254120FD7 /* Library.swift */,
+				47372E1B877680C90D177F09 /* LibraryView.swift */,
 				405004CE415A8F34B426EBB7 /* MenuBarContent.swift */,
 				BAB4A2D07C668E5D558A2C5A /* OverlayWindow.swift */,
+				CE606314CB675D017F4EB425 /* PlaybackViews.swift */,
 				63CC483FCE2C36648F15AB40 /* SettingsView.swift */,
 				E2A68A0D2C801215292F73AB /* SpeakerInspector.swift */,
 				88F8C7BD56A062D128D9B9C7 /* TranscriptView.swift */,
@@ -168,8 +177,11 @@
 				C5409880531EE6CA383EFBE4 /* DevAutomation.swift in Sources */,
 				E4CB1C989E0A300AF3968FC7 /* InstantApp.swift in Sources */,
 				3B41FB3C886E1985534D3CD4 /* LanguageMenu.swift in Sources */,
+				E1CB0CF05221456E278840F8 /* Library.swift in Sources */,
+				F8ECD2915243264AE1165754 /* LibraryView.swift in Sources */,
 				E0D9C1563F2E69A4B1B8AA08 /* MenuBarContent.swift in Sources */,
 				C01164A251B35C78F6E8AA29 /* OverlayWindow.swift in Sources */,
+				ABB506FD175E6F7B9EB7943A /* PlaybackViews.swift in Sources */,
 				0148E686D7040C6EE871B958 /* SettingsView.swift in Sources */,
 				EF641469B7FEF998FE201E0C /* SpeakerInspector.swift in Sources */,
 				22A3CC44272915EEEF0D415D /* TranscriptView.swift in Sources */,

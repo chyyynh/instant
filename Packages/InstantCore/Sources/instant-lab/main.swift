@@ -5,7 +5,8 @@ import InstantCore
 
 // End-to-end runs of the live pipeline on real audio, played at real-time speed.
 //
-//   instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file] [--ask question]
+//   instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file]
+//                   [--engine apple|soniox|elevenLabs] [--ask question]
 //   instant-lab report <trace.jsonl> [truth.json]
 //   instant-lab reference <audio> --start s --duration s --out truth.json
 //
@@ -14,6 +15,7 @@ import InstantCore
 //
 // `run` writes a trace (default /tmp/instant-trace.jsonl) and prints the report. With --ask it then
 // asks Claude about the transcript (needs ANTHROPIC_API_KEY), the way the app's Claude panel does.
+// --engine soniox / elevenLabs recognizes in the cloud instead (needs SONIOX_API_KEY / ELEVENLABS_API_KEY).
 // The app writes the same trace when launched with INSTANT_TRACE=<file>.
 
 @MainActor
@@ -31,6 +33,7 @@ func run(_ args: [String]) async -> Int32 {
     let tracePath = option("--trace", "/tmp/instant-trace.jsonl")
     let truthPath = option("--truth", "")
     let question = option("--ask", "")
+    guard let engine = SpeechEngine(rawValue: option("--engine", "apple")) else { return usage() }
     let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
     if !question.isEmpty && apiKey.isEmpty {
         print("--ask needs ANTHROPIC_API_KEY")
@@ -40,6 +43,11 @@ func run(_ args: [String]) async -> Int32 {
 
     setenv("INSTANT_TRACE", tracePath, 1)
     let session = LiveSession(sourceLocale: Locale(identifier: source), targetLanguage: Locale.Language(identifier: target))
+    session.engine = engine
+    session.apiKey = { engine in
+        let name = engine == .soniox ? "SONIOX_API_KEY" : "ELEVENLABS_API_KEY"
+        return ProcessInfo.processInfo.environment[name].flatMap { $0.isEmpty ? nil : $0 }
+    }
     let watchdog = Task { @MainActor in
         while !Task.isCancelled {
             if session.translationDownload != nil {
@@ -98,7 +106,7 @@ func ask(_ question: String, about session: LiveSession, client: ClaudeClient) a
 }
 
 func usage() -> Int32 {
-    print("usage: instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file] [--ask question]")
+    print("usage: instant-lab run <audio> [--start s] [--duration s] [--source ja-JP] [--target zh-Hant-TW] [--trace file] [--engine apple|soniox|elevenLabs] [--ask question]")
     print("       instant-lab report <trace.jsonl>")
     return 2
 }

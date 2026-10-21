@@ -4,32 +4,44 @@ import SwiftUI
 
 /// The Anthropic API key, kept in the keychain. `ANTHROPIC_API_KEY` in the environment stands in
 /// for it in development.
-enum APIKey {
-    private static var query: [String: Any] {[
+struct APIKey {
+    let account: String
+    /// Used when the keychain has no key, e.g. in development.
+    let environment: String
+
+    static let anthropic = APIKey(account: "anthropic-api-key", environment: "ANTHROPIC_API_KEY")
+
+    static func speech(_ engine: SpeechEngine) -> APIKey {
+        switch engine {
+        case .soniox: APIKey(account: "soniox-api-key", environment: "SONIOX_API_KEY")
+        case .elevenLabs: APIKey(account: "elevenlabs-api-key", environment: "ELEVENLABS_API_KEY")
+        case .apple: APIKey(account: "", environment: "")
+        }
+    }
+
+    private var query: [String: Any] {[
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: "io.github.chyyynh.instant",
-        kSecAttrAccount as String: "anthropic-api-key",
+        kSecAttrAccount as String: account,
     ]}
 
-    static func load() -> String? {
+    func load() -> String? {
+        guard !account.isEmpty else { return nil }
         var query = query
         query[kSecReturnData as String] = true
         var item: CFTypeRef?
         if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data {
             return String(decoding: data, as: UTF8.self)
         }
-        return ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"].flatMap { $0.isEmpty ? nil : $0 }
+        return ProcessInfo.processInfo.environment[environment].flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    static func save(_ key: String) {
+    func save(_ key: String?) {
         SecItemDelete(query as CFDictionary)
+        guard let key, !key.isEmpty else { return }
         var item = query
         item[kSecValueData as String] = Data(key.utf8)
         SecItemAdd(item as CFDictionary, nil)
-    }
-
-    static func delete() {
-        SecItemDelete(query as CFDictionary)
     }
 }
 

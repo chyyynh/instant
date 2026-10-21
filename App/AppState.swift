@@ -16,7 +16,9 @@ final class AppUI {
     var composerFocused = false
     /// Caption to scroll to and highlight, asked for from the Claude panel.
     var revealedCaption: Int?
-    private(set) var apiKey = APIKey.load()
+    private(set) var apiKey = APIKey.anthropic.load()
+    /// Which cloud recognizers have a key, for Settings.
+    private(set) var speechKeySet = Dictionary(uniqueKeysWithValues: SpeechEngine.allCases.map { ($0, APIKey.speech($0).load() != nil) })
     /// Whether the floating captions are showing.
     var overlayShown = false {
         didSet {
@@ -30,13 +32,57 @@ final class AppUI {
     @ObservationIgnored weak var session: LiveSession?
     @ObservationIgnored private let overlayPanel = OverlayPanel()
     #endif
+    /// Playback of the last listening's recording, once it has stopped.
+    var player: Player?
+    /// The last listening, once saved to the library.
+    var savedListening: SavedListening.ID?
+    /// The save sheet for the last listening.
+    var savingShown = false
+    /// Waiting on the user: starting over (or clearing) would lose an unsaved recording.
+    var unsavedAction: UnsavedAction?
+    /// Done after the save sheet saves (the action that asked to save first).
+    var afterSave: UnsavedAction?
+    #if os(iOS)
+    var libraryShown = false
+    #endif
+
+    enum UnsavedAction { case start, clear }
+
+    /// A recording with captions that isn't in the library yet.
+    func hasUnsavedRecording(_ session: LiveSession) -> Bool {
+        session.recording != nil && savedListening == nil && !session.captions.isEmpty
+    }
+
+    /// Starts listening, asking first if that would drop an unsaved recording.
+    func start(_ session: LiveSession) {
+        if hasUnsavedRecording(session) { unsavedAction = .start } else { perform(.start, session) }
+    }
+
+    /// Clears the captions, asking first if that would drop an unsaved recording.
+    func clear(_ session: LiveSession) {
+        if hasUnsavedRecording(session) { unsavedAction = .clear } else { perform(.clear, session) }
+    }
+
+    func perform(_ action: UnsavedAction, _ session: LiveSession) {
+        player?.stop()
+        switch action {
+        case .start: Task { await session.start() }
+        case .clear: session.clear()
+        }
+    }
+
     /// Speaker slot being renamed; drives the rename alert.
     var renamingSpeaker: Int?
     var newSpeakerName = ""
 
     func setAPIKey(_ key: String?) {
-        if let key, !key.isEmpty { APIKey.save(key) } else { APIKey.delete() }
-        apiKey = APIKey.load()
+        APIKey.anthropic.save(key)
+        apiKey = APIKey.anthropic.load()
+    }
+
+    func setSpeechKey(_ key: String?, for engine: SpeechEngine) {
+        APIKey.speech(engine).save(key)
+        speechKeySet[engine] = APIKey.speech(engine).load() != nil
     }
 
     func rename(_ speaker: Int, in session: LiveSession) {
@@ -52,6 +98,8 @@ enum Pref {
     static let overlayLines = "overlayLines"
     static let overlayTranslationOnly = "overlayTranslationOnly"
     static let speakersEnabled = "speakersEnabled"
+    static let speechEngine = "speechEngine"
+    static let recordingEnabled = "recordingEnabled"
     static let showMenuBarExtra = "showMenuBarExtra"
 }
 
@@ -86,11 +134,16 @@ extension LiveSession {
 
     /// Slots given the same name share the color of the lowest such slot, so they read as one person.
     func speakerColor(_ speaker: Int) -> Color {
+        Self.speakerColors[speakerColorIndex(speaker)]
+    }
+
+    /// Index into `speakerColors`, for keeping a speaker's color in a saved listening.
+    func speakerColorIndex(_ speaker: Int) -> Int {
         let slot = speakerNames[speaker].flatMap { given in
             speakerNames.filter { $0.value == given }.keys.min()
         } ?? speaker
         let index = speakerOrder.firstIndex(of: slot) ?? slot
-        return Self.speakerColors[index % Self.speakerColors.count]
+        return index % Self.speakerColors.count
     }
 
     /// People heard so far, in order of first appearance, with same-named slots merged.

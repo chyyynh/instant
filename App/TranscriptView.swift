@@ -25,6 +25,7 @@ struct TranscriptView: View {
     var body: some View {
         let captions = session.captions
         let asked = askedAt
+        let playing = playingIndex
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 // Captions never change once shown, so equal rows skip re-rendering. Caption ids
@@ -36,15 +37,21 @@ struct TranscriptView: View {
                                speaker: newSpeaker ? line.speaker.map { CaptionRow.Speaker(name: session.displayName(of: $0), color: session.speakerColor($0)) } : nil,
                                asked: asked[index])
                         .equatable()
-                        .opacity(index < captions.count - Self.recentCount && highlighted != index ? 0.55 : 1)
+                        .opacity(index < captions.count - Self.recentCount && highlighted != index && playing != index && ui.player == nil ? 0.55 : 1)
                         .background {
-                            if highlighted == index {
+                            if highlighted == index || playing == index {
                                 RoundedRectangle(cornerRadius: 10)
                                     .fill(.tint.opacity(0.15))
                                     .padding(-8)
                             }
                         }
+                        .onTapGesture {
+                            if let player = ui.player, !session.status.isActive { player.play(from: max(line.start - 0.3, 0)) }
+                        }
                         .contextMenu {
+                            if let player = ui.player, !session.status.isActive {
+                                Button("從這裡播放", systemImage: "play") { player.play(from: max(line.start - 0.3, 0)) }
+                            }
                             if let speaker = line.speaker {
                                 Button("重新命名「\(session.displayName(of: speaker))」…", systemImage: "pencil") {
                                     ui.rename(speaker, in: session)
@@ -82,6 +89,12 @@ struct TranscriptView: View {
             guard following else { return }
             withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
         }
+        // Keep the caption being played in view.
+        .onChange(of: playing) {
+            guard let playing, ui.player?.isPlaying == true else { return }
+            following = false
+            withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: playing, anchor: .center) }
+        }
         .onChange(of: points) {
             if following { position.scrollTo(edge: .bottom) }
         }
@@ -105,6 +118,12 @@ struct TranscriptView: View {
                     .transition(.opacity)
             }
         }
+    }
+
+    /// The caption at the playback position, once playback has begun.
+    private var playingIndex: Int? {
+        guard let player = ui.player, !session.status.isActive, player.isPlaying || player.currentTime > 0 else { return nil }
+        return session.captions.lastIndex { $0.start <= player.currentTime + 0.05 }
     }
 
     /// The questions asked to Claude, by the last caption it had seen then.
@@ -132,7 +151,7 @@ struct TranscriptView: View {
 }
 
 /// A shown caption: translation, with the original underneath; speaker name when it changes.
-private struct CaptionRow: View, Equatable {
+struct CaptionRow: View, Equatable {
     struct Speaker: Equatable {
         let name: String
         let color: Color

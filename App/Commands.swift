@@ -10,6 +10,7 @@ struct InstantCommands: Commands {
     let assistant: Assistant
     @AppStorage(Pref.captionPoints) private var captionPoints = CaptionMetrics.standard
     @AppStorage(Pref.showOriginal) private var showOriginal = true
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandMenu("字幕") {
@@ -17,7 +18,7 @@ struct InstantCommands: Commands {
                 switch session.status {
                 case .running: Task { await session.stop() }
                 case .preparing: session.cancelStart()
-                case .idle, .failed: Task { await session.start() }
+                case .idle, .failed: ui.start(session)
                 }
             }
             .keyboardShortcut(.space, modifiers: [])
@@ -33,9 +34,15 @@ struct InstantCommands: Commands {
             Toggle("區分說話者", isOn: session.speakersEnabledBinding)
                 .disabled(session.status.isActive)
             Divider()
-            Button("清除字幕") { session.clear() }
+            Button("清除字幕") { ui.clear(session) }
                 .keyboardShortcut("k")
                 .disabled(session.status.isActive || session.captions.isEmpty)
+            Divider()
+            Button("儲存這次聆聽…") { ui.savingShown = true }
+                .keyboardShortcut("s")
+                .disabled(session.status.isActive || session.captions.isEmpty || ui.savedListening != nil)
+            Button("聆聽紀錄") { openWindow(id: WindowID.library) }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
         }
 
         CommandGroup(after: .toolbar) {

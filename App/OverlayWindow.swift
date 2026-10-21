@@ -49,6 +49,7 @@ final class OverlayPanel {
 
 private struct OverlayView: View {
     @Environment(LiveSession.self) private var session
+    @Environment(AppUI.self) private var ui
     @AppStorage(Pref.captionPoints) private var captionPoints = CaptionMetrics.standard
     @AppStorage(Pref.showOriginal) private var showOriginal = true
     @AppStorage(Pref.overlayLines) private var overlayLines = 2
@@ -72,7 +73,7 @@ private struct OverlayView: View {
             Text(session.languageTitle)
             Spacer()
             Button {
-                Task { session.status.isActive ? await session.stop() : await session.start() }
+                if session.status.isActive { Task { await session.stop() } } else { ui.start(session) }
             } label: {
                 Label(session.status.isActive ? "停止" : "開始", systemImage: session.status.isActive ? "pause.fill" : "play.fill")
             }
