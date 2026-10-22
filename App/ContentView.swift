@@ -129,8 +129,10 @@ struct ContentView: View {
             let elapsed = session.startedAt.map { Duration.seconds(max(0, now.timeIntervalSince($0)).rounded(.down)).formatted(.time(pattern: .minuteSecond)) } ?? ""
             return Text("聆聽中 · \(session.sourceDescription) · \(elapsed)")
         case .idle, .failed:
-            if let recording = session.recording, !session.captions.isEmpty {
-                return Text("已停止 · \(session.sourceDescription) · \(PlaybackBar.format(recording.duration))")
+            // Stopped with captions still on screen (with or without a recording to play back).
+            if !session.captions.isEmpty {
+                let duration = session.recording?.duration ?? session.captions.last?.end ?? 0
+                return Text("已停止 · \(session.sourceDescription) · \(PlaybackBar.format(duration))")
             }
             return Text("\(session.inputName) · \(session.engine.isCloud ? "\(session.engine.name) 雲端辨識" : "裝置上處理")")
         }
@@ -242,7 +244,8 @@ private struct IdleView: View {
         let target = Locale.current.localizedString(forLanguageCode: session.targetLanguage.languageCode?.identifier ?? "") ?? "中文"
         #if os(macOS)
         let heard = session.input == .microphone ? "聽身邊的人說的\(spoken)" : "聽 Mac 播出的\(spoken)"
-        return "\(heard)，翻成\(target)字幕。全部在這台 Mac 上處理。"
+        let processed = session.engine.isCloud ? "聲音會上傳到 \(session.engine.name) 處理。" : "全部在這台 Mac 上處理。"
+        return "\(heard)，翻成\(target)字幕。\(processed)"
         #else
         return "把手機放在說話的人附近，\(spoken)會即時翻成\(target)字幕。"
         #endif
@@ -274,7 +277,7 @@ struct TransportButton: View {
         switch kind {
         case .start:
             Button { ui.start(session) } label: {
-                Label(session.recording != nil ? "新的聆聽" : "開始", systemImage: "mic.fill")
+                Label(session.captions.isEmpty ? "開始" : "新的聆聽", systemImage: "mic.fill")
                     .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.glassProminent)

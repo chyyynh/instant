@@ -152,13 +152,13 @@ struct RecordingCard: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
-        .confirmationDialog("捨棄這段錄音？", isPresented: $discarding) {
-            Button("捨棄錄音", role: .destructive) {
+        .confirmationDialog("捨棄這次聆聽？", isPresented: $discarding) {
+            Button("捨棄", role: .destructive) {
                 player.stop()
-                session.discardRecording()
+                session.clear()
             }
         } message: {
-            Text("字幕會留在畫面上，但不能再回放。")
+            Text("字幕和錄音都會清除。")
         }
     }
 
