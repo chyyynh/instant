@@ -8,7 +8,7 @@ public struct Line: Identifiable, Sendable, Equatable {
     /// False while the segment is still part of the recognizer's in-progress result and may be revised.
     public var isFinal: Bool
     /// Where the line was spoken, in seconds since the session began. Exact for final results;
-    /// estimated to about a second for in-progress ones (see `LiveTranscriber`).
+    /// estimated to about a second for in-progress ones (see `AppleProvider`).
     public var start: TimeInterval = 0
     public var end: TimeInterval = 0
 }
@@ -31,8 +31,6 @@ public struct Transcript: Sendable {
     /// The segment still being spoken.
     public var volatile: String { tail?.text ?? "" }
     private var tail: Segment?
-    /// Rough translation of (a recent snapshot of) `volatile`, when drafts are enabled.
-    public private(set) var draftTranslation: String?
     /// How many leading lines are captions: translated, in order, never changing again.
     public private(set) var shownCount = 0
 
@@ -44,7 +42,6 @@ public struct Transcript: Sendable {
     /// lines settled after a pause. Later results — revisions, and the final with its own
     /// segmentation — only affect the text after them.
     private var locked: [Segment] = []
-    private var draftSource = ""
     private var translations: [String: String] = [:]
     private var inFlight: Set<String> = []
 
@@ -78,14 +75,26 @@ public struct Transcript: Sendable {
             let (segments, tail) = segmenter.split(unlocked(tokens), isFinal: false)
             replaceCurrentResult(with: locked + segments, isFinal: false)
             self.tail = tail
-        case .final(let tokens):
+        case .final(let tokens, let translation?):
+            // The provider translated it as one line: shown as is.
+            let text = Segmenter.text(tokens)
+            if !text.isEmpty {
+                translations[text] = translation
+                replaceCurrentResult(with: [Segment(text: text, start: tokens.first?.start ?? 0, end: tokens.last?.end ?? 0)],
+                                     isFinal: true)
+            } else {
+                replaceCurrentResult(with: [], isFinal: true)
+            }
+            finalCount = lines.count
+            locked = []
+            tail = nil
+        case .final(let tokens, nil):
             let (segments, _) = segmenter.split(unlocked(tokens), isFinal: true)
             replaceCurrentResult(with: locked + segments, isFinal: true)
             finalCount = lines.count
             locked = []
             tail = nil
         }
-        dropStaleDraft()
     }
 
     /// Treats the in-progress segment as complete, e.g. after the speaker has been silent a while
@@ -96,7 +105,6 @@ public struct Transcript: Sendable {
                           start: tail.start, end: tail.end))
         locked = lines[finalCount...].map(Self.segment)
         self.tail = nil
-        dropStaleDraft()
         advanceShown()
     }
 
@@ -124,14 +132,6 @@ public struct Transcript: Sendable {
     /// Lets a failed line be requested again on the next event.
     public mutating func translationFailed(forSource source: String) {
         inFlight.remove(source)
-    }
-
-    /// Records a draft translation of `source`, a snapshot of the in-progress text. Ignored if that
-    /// text has since been completed or replaced.
-    public mutating func setDraftTranslation(_ translation: String, forSource source: String) {
-        guard !volatile.isEmpty, Self.continues(volatile, from: source) else { return }
-        draftTranslation = translation
-        draftSource = source
     }
 
     /// Up to `limit` translated lines immediately before `id`, oldest first.
@@ -176,19 +176,6 @@ public struct Transcript: Sendable {
 
     private static func segment(_ line: Line) -> Segment {
         Segment(text: line.source, start: line.start, end: line.end)
-    }
-
-    /// Drops the draft once the in-progress text it was made from has completed or been replaced.
-    private mutating func dropStaleDraft() {
-        guard draftTranslation != nil, volatile.isEmpty || !Self.continues(volatile, from: draftSource) else { return }
-        draftTranslation = nil
-        draftSource = ""
-    }
-
-    /// Whether `text` is (a revision or extension of) the speech `earlier` was taken from.
-    static func continues(_ text: String, from earlier: String) -> Bool {
-        let probe = earlier.prefix(min(4, earlier.count))
-        return !probe.isEmpty && text.hasPrefix(probe)
     }
 
     /// The tokens after the locked lines.

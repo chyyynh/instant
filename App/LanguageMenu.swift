@@ -22,7 +22,7 @@ struct LanguagePickers: View {
         }
         .disabled(session.status.isActive)
         .task {
-            spoken = await LiveTranscriber.supportedLocales().sorted { Self.name($0.bcp47) < Self.name($1.bcp47) }
+            spoken = await AppleProvider.supportedLocales().sorted { Self.name($0.bcp47) < Self.name($1.bcp47) }
             targets = await AppleTranslator.supportedLanguages().sorted { Self.name($0.minimalIdentifier) < Self.name($1.minimalIdentifier) }
         }
     }

@@ -120,7 +120,8 @@ func report(_ path: String) {
     let requests = stage("mt.request")
     let responses = stage("mt.response")
     let segs = stage("seg.update")
-    let drafts = stage("mt.draft")
+    // Lines a provider sent already translated (Soniox).
+    let providerTranslated = results.filter { $0["kind"] as? String == "final" && $0["translation"] != nil }
     let finalLines = (events.last { $0["lines"] != nil }?["lines"] as? [[String: Any]]) ?? []
     let finalSources = Set(finalLines.compactMap { $0["source"] as? String })
 
@@ -137,6 +138,7 @@ func report(_ path: String) {
     for response in responses {
         if let source = response["source"] as? String, translated[source] == nil { translated[source] = t(response) }
     }
+    let firstTranslated = [responses.first, providerTranslated.first].compactMap { $0 }.map(t).min()
     let lineWait = finalSources.compactMap { source in
         appeared[source].flatMap { start in translated[source].map { $0 - start } }
     }
@@ -151,7 +153,7 @@ func report(_ path: String) {
     ── e2e report ─────────────────────────────────────────
     audio played             \(fmt(audioEnd))s
     first recognized text    \(results.first.map { fmt(t($0)) + "s" } ?? "—")
-    first translated line    \(responses.first.map { fmt(t($0)) + "s" } ?? "—")
+    first translated line    \(firstTranslated.map { fmt($0) + "s" } ?? "—")
     asr results              \(results.count) (\(results.filter { $0["kind"] as? String == "final" }.count) final)
     asr lag behind audio     \(stats(results.compactMap { $0["lag"] as? Double }))
     asr update interval      \(stats(zip(results.dropFirst(), results).map { t($0) - t($1) }))
@@ -159,8 +161,7 @@ func report(_ path: String) {
     line → translation wait  \(stats(lineWait))
     mt requests              \(requests.count) for \(finalLines.count) lines; \(unused) for text that didn't survive, \(stale) stale on arrival
     mt time                  \(stats(responses.compactMap { ($0["ms"] as? Int).map { Double($0) / 1000 } }))
-    draft translations       \(drafts.count) (\(drafts.filter { $0["stale"] as? Bool == true }.count) stale), \(stats(drafts.compactMap { ($0["ms"] as? Int).map { Double($0) / 1000 } }))
-    chinese for live text    \(stats(zip(drafts.dropFirst(), drafts).map { t($0) - t($1) })) between draft updates
+    provider translations    \(providerTranslated.count); speech end → caption \(stats(providerTranslated.compactMap { $0["lag"] as? Double }))
     shown captions rewritten \(stage("seg.rewrite").count) (revisions under locked captions: \(stage("seg.realign").filter { $0["method"] as? String == "ending" }.count) realigned by ending, \(stage("seg.realign").filter { $0["method"] as? String == "count" }.count) by count)
     main-thread stalls       \(stage("main.stall").count) over 250ms, worst \(stage("main.load").compactMap { $0["worst_ms"] as? Int }.max().map { "\($0)ms" } ?? "—")
     errors                   \(events.filter { ($0["stage"] as? String)?.hasSuffix(".error") == true }.count)

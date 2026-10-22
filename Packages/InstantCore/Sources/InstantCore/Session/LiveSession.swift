@@ -36,7 +36,7 @@ public final class LiveSession {
     }
 
     /// Full pipeline state. Not observed directly: it changes several times a second, and views
-    /// observing it would all re-render. Views use `captions`, `pendingText` and `draftTranslation`.
+    /// observing it would all re-render. Views use `captions` and `pendingText`.
     @ObservationIgnored public private(set) var transcript = Transcript() {
         didSet { publish() }
     }
@@ -44,7 +44,6 @@ public final class LiveSession {
     public private(set) var captions: [Line] = []
     /// Recognized text not yet a caption (Japanese only).
     public private(set) var pendingText = ""
-    public private(set) var draftTranslation: String?
     public private(set) var status: Status = .idle {
         didSet { if status != oldValue { Trace.shared.event("session.status", ["status": "\(status)"]) } }
     }
@@ -75,12 +74,6 @@ public final class LiveSession {
 
     /// How many earlier lines are passed to context-aware translators.
     public var contextLimit = 6
-    /// Also translate the segment still being spoken, re-translating as it grows. Off: a line is
-    /// translated once it's segmented (~70ms with `.lowLatency`), so captions appear complete and
-    /// never change under the reader, and half a Japanese sentence often translates misleadingly.
-    public var draftTranslationsEnabled = false
-    /// Minimum spacing between draft translations of in-progress speech.
-    public var draftInterval: Duration = .milliseconds(500)
     /// With no new recognition for this long, the in-progress segment is treated as complete.
     /// Longer than the recognizer's ~1s update cadence so ongoing speech isn't cut.
     public var settleDelay: Duration = .milliseconds(1500)
@@ -89,10 +82,10 @@ public final class LiveSession {
     public var stableDelay: Duration = .milliseconds(400)
 
     private var audioSource: AudioSource?
-    private var transcriber: SpeechRecognizer?
+    private var provider: SpeechProvider?
+    /// Translates lines on device, for providers that only recognize.
     private var translator: Translator?
     private var eventsTask: Task<Void, Never>?
-    private var draftTask: Task<Void, Never>?
     private var settleTask: Task<Void, Never>?
     private var stableTimers: [String: Task<Void, Never>] = [:]
     private var stallProbe: Task<Void, Never>?
@@ -113,7 +106,7 @@ public final class LiveSession {
     private var recorderTask: Task<Double, Never>?
     private var recordingURL: URL?
 
-    /// Who recognizes speech. Cloud engines need `apiKey(engine)` to return a key.
+    /// Who recognizes (and maybe translates) speech. Cloud engines need `apiKey(engine)` to return a key.
     public var engine: SpeechEngine = .apple
     /// The user's key for a cloud engine, read when a session starts.
     public var apiKey: (SpeechEngine) -> String? = { _ in nil }
@@ -135,21 +128,19 @@ public final class LiveSession {
             "source": sourceLocale.identifier(.bcp47),
             "target": targetLanguage.maximalIdentifier,
             "input": override.map { "\(type(of: $0))" } ?? input.rawValue,
-            "drafts": draftTranslationsEnabled,
             "engine": engine.rawValue,
         ])
         do {
-            status = .preparing("準備翻譯…")
-            translator = try await makeTranslator()
-
-            try checkCancelled()
-
             let engine = engine
             let key = engine.isCloud ? apiKey(engine) ?? "" : ""
             if engine.isCloud && key.isEmpty { throw SessionError.missingAPIKey(engine) }
-            let cloud = engine.isCloud
-                ? CloudTranscriber(engine: engine, apiKey: key, locale: sourceLocale)
-                : nil
+            let provider = engine.makeProvider(ProviderOptions(source: sourceLocale, target: targetLanguage, apiKey: key))
+
+            if !provider.translates {
+                status = .preparing("準備翻譯…")
+                translator = try await makeTranslator()
+                try checkCancelled()
+            }
 
             status = .preparing("開啟音訊…")
             let source = override ?? makeAudioSource()
@@ -182,9 +173,8 @@ public final class LiveSession {
             }
 
             status = .preparing(engine.isCloud ? "連線到 \(engine.name)…" : "準備語音辨識…")
-            let transcriber: SpeechRecognizer = cloud ?? LiveTranscriber(locale: sourceLocale)
-            self.transcriber = transcriber
-            let events = try await transcriber.start(audio: chunks)
+            self.provider = provider
+            let events = try await provider.start(audio: chunks)
             try checkCancelled()
 
             status = .running
@@ -221,12 +211,12 @@ public final class LiveSession {
     /// Stops capture; already-heard speech is still recognized and translated.
     public func stop() async {
         audioSource?.stop()
-        await transcriber?.stop()
+        await provider?.stop()
         await eventsTask?.value
     }
 
     /// Input level 0…1 for a meter; 0 when not listening.
-    public var audioLevel: Float { transcriber?.level.value ?? 0 }
+    public var audioLevel: Float { provider?.level.value ?? 0 }
 
     public func clear() {
         guard !status.isActive else { return }
@@ -247,7 +237,7 @@ public final class LiveSession {
     /// without running the pipeline, so the UI can be checked where speech recognition can't run,
     /// such as the Simulator.
     public func showDemoState(captions demo: [(source: String, translation: String)],
-                              pending: String, draft: String?, elapsed: TimeInterval) {
+                              pending: String, elapsed: TimeInterval) {
         captions = demo.enumerated().map { index, line in
             var caption = Line(id: index, source: line.source, translation: line.translation, isFinal: true)
             // Spread over the elapsed time, leaving the last stretch for the pending line.
@@ -255,7 +245,6 @@ public final class LiveSession {
             return caption
         }
         pendingText = pending
-        draftTranslation = draft
         sourceDescription = input == .microphone ? "麥克風" : "Mac 聲音"
         startedAt = .now - elapsed
         status = .running
@@ -270,7 +259,6 @@ public final class LiveSession {
         }
         let pending = transcript.pendingText
         if pending != pendingText { pendingText = pending }
-        if transcript.draftTranslation != draftTranslation { draftTranslation = transcript.draftTranslation }
     }
 
     public func translationDownloadFinished() {
@@ -314,6 +302,8 @@ public final class LiveSession {
         let before = Array(transcript.lines[start...])
         transcript.apply(event)
         traceSegmentation(before: before, from: start, cause: { if case .final = event { "final" } else { "volatile" } }())
+        // The provider translates: lines come complete with their translations.
+        guard translator != nil else { return }
         scheduleTranslations()
         settleTask?.cancel()
         guard !transcript.volatile.isEmpty else { return }
@@ -325,9 +315,6 @@ public final class LiveSession {
             transcript.settleTail()
             traceSegmentation(before: before, from: start, cause: "settle")
             scheduleTranslations()
-        }
-        if draftTranslationsEnabled, draftTask == nil {
-            draftTask = Task { [weak self] in await self?.runDrafts() }
         }
     }
 
@@ -435,32 +422,6 @@ public final class LiveSession {
         ])
     }
 
-    /// Translates the in-progress text at most every `draftInterval` until it commits.
-    private func runDrafts() async {
-        defer { draftTask = nil }
-        var lastDrafted = ""
-        while !Task.isCancelled, let translator {
-            let snapshot = transcript.volatile
-            if snapshot.isEmpty { return }
-            if snapshot != lastDrafted {
-                lastDrafted = snapshot
-                let context = transcript.lines.last.map { transcript.context(before: $0.id + 1, limit: contextLimit) } ?? []
-                let requested = Trace.shared.elapsed
-                if let draft = try? await translator.translate(snapshot, context: context) {
-                    transcript.setDraftTranslation(draft, forSource: snapshot)
-                    Trace.shared.event("mt.draft", [
-                        "source": snapshot,
-                        "translation": draft,
-                        "ms": Int((Trace.shared.elapsed - requested) * 1000),
-                        // The in-progress text moved on while translating.
-                        "stale": transcript.volatile != snapshot,
-                    ])
-                }
-            }
-            try? await Task.sleep(for: draftInterval)
-        }
-    }
-
     private func finish(_ error: Error?) {
         Trace.shared.event("session.end", [
             "error": error.map { "\($0)" } ?? "",
@@ -486,8 +447,6 @@ public final class LiveSession {
         }
         recorderTask = nil
         recordingURL = nil
-        draftTask?.cancel()
-        draftTask = nil
         settleTask?.cancel()
         settleTask = nil
         stableTimers.values.forEach { $0.cancel() }
@@ -504,8 +463,9 @@ public final class LiveSession {
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
         startedAt = nil
-        await transcriber?.cancel()
-        transcriber = nil
+        await provider?.cancel()
+        provider = nil
+        translator = nil
         eventsTask = nil
     }
 

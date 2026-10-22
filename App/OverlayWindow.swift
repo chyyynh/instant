@@ -105,14 +105,9 @@ private struct OverlayView: View {
                     .foregroundStyle(.secondary)
             }
         } else if !session.pendingText.isEmpty {
-            // Someone is speaking: the last caption above, the draft (dimmed) and the Japanese.
+            // Someone is speaking: the last caption above and the Japanese.
             if overlayLines > 1, let last = captions.last {
                 previous(last)
-            }
-            if let draft = session.draftTranslation {
-                Text(draft)
-                    .font(.system(size: points, weight: .medium))
-                    .foregroundStyle(.secondary)
             }
             if original {
                 Text(session.pendingText)

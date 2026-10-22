@@ -115,8 +115,8 @@ private struct RecognitionSettings: View {
         } footer: {
             switch engine {
             case .apple: Text("在這台裝置上辨識，不需要網路，聲音不會離開裝置。")
-            case .soniox: Text("聲音會即時上傳到 Soniox 辨識。約 US$0.18／小時。")
-            case .elevenLabs: Text("聲音會即時上傳到 ElevenLabs（Scribe v2 Realtime）辨識。約 US$0.39／小時。")
+            case .soniox: Text("聲音會即時上傳到 Soniox，辨識和翻譯都由 Soniox 處理。約 US$0.18／小時，翻譯不另外收費。")
+            case .elevenLabs: Text("聲音會即時上傳到 ElevenLabs（Scribe v2 Realtime）辨識，在這台裝置上翻譯。約 US$0.39／小時。")
             }
         }
         if engine.isCloud {

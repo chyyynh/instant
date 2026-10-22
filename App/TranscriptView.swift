@@ -173,7 +173,7 @@ struct CaptionRow: View, Equatable {
 }
 
 /// Speech not yet captioned, in a glass card pinned under the captions: a level-driven waveform,
-/// the draft translation (if any) dimmed, and the recognized Japanese as it changes.
+/// and the recognized Japanese as it changes.
 struct LiveCard: View {
     @Environment(LiveSession.self) private var session
     let points: Double
@@ -191,11 +191,6 @@ struct LiveCard: View {
                     Text("聆聽中…")
                         .foregroundStyle(.secondary)
                 } else {
-                    if let draft = session.draftTranslation {
-                        Text(draft)
-                            .font(.system(size: points * 0.85, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
                     Text(session.pendingText)
                 }
             }
