@@ -17,18 +17,44 @@ final class AppUI {
     private(set) var apiKey = APIKey.anthropic.load()
     /// Which cloud recognizers have a key, for Settings.
     private(set) var speechKeySet = Dictionary(uniqueKeysWithValues: SpeechEngine.allCases.map { ($0, APIKey.speech($0).load() != nil) })
-    /// Whether the floating captions are showing.
+    /// Mac: the session is shown as floating captions instead of in the main window. The two are
+    /// different views of the same session, never on screen together.
     var overlayShown = false {
         didSet {
             #if os(macOS)
             guard overlayShown != oldValue, let session else { return }
-            overlayShown ? overlayPanel.show(session: session, ui: self) : overlayPanel.hide()
+            if overlayShown {
+                overlayPanel.show(session: session, ui: self)
+                mainWindow?.orderOut(nil)
+            } else {
+                overlayPanel.hide()
+                showMainWindow()
+            }
             #endif
         }
     }
     #if os(macOS)
     @ObservationIgnored weak var session: LiveSession?
     @ObservationIgnored private let overlayPanel = OverlayPanel()
+    /// Opens the main window if it has been closed; set by the main window.
+    @ObservationIgnored var openMainWindow: (() -> Void)?
+
+    private var mainWindow: NSWindow? {
+        NSApp.windows.first { $0.identifier?.rawValue.hasPrefix(WindowID.main) == true }
+    }
+
+    /// Brings back the main window, hidden (or closed) while the floating captions showed.
+    func showMainWindow() {
+        if let mainWindow { mainWindow.makeKeyAndOrderFront(nil) } else { openMainWindow?() }
+        NSApp.activate()
+    }
+
+    /// The main window came forward some other way (the Dock icon, the menu bar): it replaces the
+    /// floating captions.
+    func mainWindowBecameKey(_ window: NSWindow) {
+        guard overlayShown, window.identifier?.rawValue.hasPrefix(WindowID.main) == true else { return }
+        overlayShown = false
+    }
     #endif
     /// Playback of the last listening's recording, once it has stopped.
     var player: Player?

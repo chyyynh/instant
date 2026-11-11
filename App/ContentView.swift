@@ -64,6 +64,12 @@ struct ContentView: View {
         .sheet(isPresented: $ui.libraryShown) { LibraryView() }
         #endif
         .unsavedRecordingDialog()
+        #if os(macOS)
+        .onAppear { ui.openMainWindow = { [openWindow] in openWindow(id: WindowID.main) } }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            if let window = note.object as? NSWindow { ui.mainWindowBecameKey(window) }
+        }
+        #endif
         .onChange(of: session.recording, initial: true) {
             ui.player?.stop()
             ui.player = session.recording.map { Player(url: $0.url) }
@@ -166,9 +172,8 @@ struct ContentView: View {
             if LiveSession.Input.available.count > 1 {
                 InputMenu()
             }
-            Toggle("浮動字幕", systemImage: "pip", isOn: Bindable(ui).overlayShown)
-                .toggleStyle(.button)
-                .help("在所有視窗上方顯示字幕")
+            Button("切換成浮動字幕", systemImage: "pip.enter") { ui.overlayShown = true }
+                .help("收起視窗，改成浮在所有視窗上方的字幕")
         }
         ToolbarItem {
             Button("聆聽紀錄", systemImage: "clock") { openWindow(id: WindowID.library) }

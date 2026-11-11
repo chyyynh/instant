@@ -183,9 +183,10 @@ private struct CaptionSettings: View {
         }
         #if os(macOS)
         Section("浮動字幕") {
-            Picker("行數", selection: $overlayLines) {
-                Text("1 行").tag(1)
-                Text("2 行").tag(2)
+            Picker("顯示句數", selection: $overlayLines) {
+                Text("1 句").tag(1)
+                Text("2 句").tag(2)
+                Text("3 句").tag(3)
             }
             Toggle("只顯示翻譯", isOn: $overlayTranslationOnly)
         }

@@ -53,8 +53,12 @@ struct MenuBarContent: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Button("打開 Instant") {
-                    openWindow(id: WindowID.main)
-                    NSApp.activate()
+                    if ui.overlayShown {
+                        ui.overlayShown = false
+                    } else {
+                        openWindow(id: WindowID.main)
+                        NSApp.activate()
+                    }
                 }
                 SettingsLink { Text("設定…") }
                 Button("結束 Instant") { NSApp.terminate(nil) }
@@ -75,7 +79,7 @@ struct MenuBarContent: View {
             session.startedAt.map { Text("聆聽中 · \(Text($0, style: .timer).monospacedDigit())") } ?? Text("聆聽中")
         case .preparing(let message): Text(message)
         case .failed(let message): Text(message)
-        case .idle: Text("\(session.inputName) · 裝置上處理")
+        case .idle: Text("\(session.inputName) · \(session.engine.isCloud ? "\(session.engine.name) 雲端辨識" : "裝置上處理")")
         }
     }
 
