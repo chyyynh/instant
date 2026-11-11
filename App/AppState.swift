@@ -110,6 +110,8 @@ final class AppUI {
 enum Pref {
     static let captionPoints = "captionPoints"
     static let showOriginal = "showOriginal"
+    static let furigana = "furigana"
+    static let originalFirst = "originalFirst"
     static let overlayLines = "overlayLines"
     static let overlayTranslationOnly = "overlayTranslationOnly"
     static let speechEngine = "speechEngine"
@@ -126,6 +128,10 @@ enum CaptionMetrics {
 
     static func translationFont(_ points: Double) -> Font { .system(size: points, weight: .semibold) }
     static func originalFont(_ points: Double) -> Font { .system(size: (points * 0.67).rounded()) }
+    /// The original as the top line (原文在上): as large as a translation, lighter.
+    static func originalPrimaryFont(_ points: Double) -> Font { .system(size: points, weight: .medium) }
+    /// Widest a caption's text runs: about 32 characters of translation.
+    static func measure(_ points: Double) -> Double { points * 32 }
 }
 
 extension LiveSession {

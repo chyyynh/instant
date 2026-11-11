@@ -108,6 +108,8 @@ private struct ListeningDetail: View {
     @Environment(Library.self) private var library
     @AppStorage(Pref.captionPoints) private var captionPoints = CaptionMetrics.standard
     @AppStorage(Pref.showOriginal) private var showOriginal = true
+    @AppStorage(Pref.furigana) private var furiganaEnabled = true
+    @AppStorage(Pref.originalFirst) private var originalFirst = false
     let listening: SavedListening
     @State private var player: Player?
 
@@ -115,13 +117,14 @@ private struct ListeningDetail: View {
         let playing = player.flatMap { player in
             player.isPlaying || player.currentTime > 0 ? listening.captions.lastIndex { $0.start <= player.currentTime + 0.05 } : nil
         }
+        let furigana = furiganaEnabled && Furigana.isAvailable && Furigana.applies(toLanguages: listening.languages)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     ForEach(listening.captions.indices, id: \.self) { index in
                         let caption = listening.captions[index]
                         CaptionRow(translation: caption.translation, original: showOriginal ? caption.source : nil, points: captionPoints,
-                                   asked: nil)
+                                   asked: nil, furigana: furigana, originalFirst: originalFirst)
                             .equatable()
                             .background {
                                 if playing == index {

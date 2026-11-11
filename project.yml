@@ -6,6 +6,8 @@ options:
     macOS: "26.0"
     iOS: "26.0"
   createIntermediateGroups: true
+  # Newer XcodeGen adds preset build settings (iOS signing identity among them); keep only ours.
+  settingPresets: none
   # The UI is written in Traditional Chinese: system menus and language names follow it.
   developmentLanguage: zh-Hant
 
@@ -35,6 +37,7 @@ targets:
       base:
         PRODUCT_NAME: Instant
         # One multiplatform target: native macOS and iOS (not Catalyst / "Designed for iPad").
+        SDKROOT: auto
         SUPPORTED_PLATFORMS: "macosx iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO

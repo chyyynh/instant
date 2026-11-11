@@ -15,14 +15,15 @@ struct SettingsView: View {
             Tab("一般", systemImage: "gearshape", value: "general") {
                 Form { GeneralSettings() }.formStyle(.grouped)
             }
-            Tab("辨識", systemImage: "waveform", value: "recognition") {
-                Form { RecognitionSettings() }.formStyle(.grouped)
-            }
             Tab("字幕", systemImage: "captions.bubble", value: "captions") {
                 Form { CaptionSettings() }.formStyle(.grouped)
             }
-            Tab("AI", systemImage: "sparkles", value: "ai") {
-                Form { AssistantSettings() }.formStyle(.grouped)
+            Tab("服務", systemImage: "key", value: "services") {
+                Form {
+                    RecognitionSettings()
+                    AssistantSettings()
+                }
+                .formStyle(.grouped)
             }
         }
         .scenePadding()
@@ -156,6 +157,8 @@ private struct RecognitionSettings: View {
 private struct CaptionSettings: View {
     @AppStorage(Pref.captionPoints) private var captionPoints = CaptionMetrics.standard
     @AppStorage(Pref.showOriginal) private var showOriginal = true
+    @AppStorage(Pref.furigana) private var furigana = true
+    @AppStorage(Pref.originalFirst) private var originalFirst = false
     @AppStorage(Pref.overlayLines) private var overlayLines = 2
     @AppStorage(Pref.overlayTranslationOnly) private var overlayTranslationOnly = false
 
@@ -172,6 +175,16 @@ private struct CaptionSettings: View {
                 Text("顯示原文")
                 Text("在翻譯下方以小字顯示原文")
             }
+            Toggle(isOn: $originalFirst) {
+                Text("原文在上")
+                Text("學語言時用：原文放大放在上面，翻譯縮小放在下面")
+            }
+            .disabled(!showOriginal)
+            Toggle(isOn: $furigana) {
+                Text("日文標上振假名")
+                Text("在原文的漢字上方標出讀音。讀音依單字判斷，不看上下文，偶爾會錯。")
+            }
+            .disabled(!showOriginal)
         } header: {
             Text("字幕")
         } footer: {

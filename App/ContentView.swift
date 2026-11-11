@@ -34,7 +34,7 @@ struct ContentView: View {
         NavigationStack {
             content
                 .navigationTitle(session.languageTitle)
-                .toolbarTitleMenu { LanguagePickers(session: session) }
+                .toolbarTitleMenu { SessionPickers(session: session) }
                 .navigationSubtitle(subtitle)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -169,17 +169,10 @@ struct ContentView: View {
     private var toolbar: some ToolbarContent {
         #if os(macOS)
         ToolbarItemGroup {
-            if LiveSession.Input.available.count > 1 {
-                InputMenu()
-            }
             Button("切換成浮動字幕", systemImage: "pip.enter") { ui.overlayShown = true }
                 .help("收起視窗，改成浮在所有視窗上方的字幕")
-        }
-        ToolbarItem {
             Button("聆聽紀錄", systemImage: "clock") { openWindow(id: WindowID.library) }
                 .help("儲存過的聆聽")
-        }
-        ToolbarItem {
             Toggle("和 Claude 討論", systemImage: "sparkles", isOn: Bindable(ui).inspectorShown)
                 .toggleStyle(.button)
                 .help("邊聽邊問 Claude 關於這段對話")
@@ -311,7 +304,7 @@ struct TransportButton: View {
     }
 }
 
-/// Microphone or Mac audio, as a toolbar menu (fixed while listening).
+/// Microphone or Mac audio, as a menu (fixed while listening).
 struct InputMenu: View {
     @Environment(LiveSession.self) private var session
 
@@ -331,11 +324,30 @@ struct InputMenu: View {
     }
 }
 
+/// The window title's menu: what to listen to and in which languages (fixed while listening).
+struct SessionPickers: View {
+    @Bindable var session: LiveSession
+
+    var body: some View {
+        LanguagePickers(session: session)
+        if LiveSession.Input.available.count > 1 {
+            Divider()
+            Picker("音源", selection: $session.input) {
+                Label("麥克風", systemImage: "mic").tag(LiveSession.Input.microphone)
+                Label("Mac 聲音", systemImage: "speaker.wave.2").tag(LiveSession.Input.systemAudio)
+            }
+            .disabled(session.status.isActive)
+        }
+    }
+}
+
 #if os(iOS)
 /// Aa: caption size steps and the original-text toggle.
 private struct CaptionSizeMenu: View {
     @AppStorage(Pref.captionPoints) private var captionPoints = CaptionMetrics.standard
     @AppStorage(Pref.showOriginal) private var showOriginal = true
+    @AppStorage(Pref.furigana) private var furigana = true
+    @AppStorage(Pref.originalFirst) private var originalFirst = false
 
     var body: some View {
         Menu {
@@ -348,6 +360,10 @@ private struct CaptionSizeMenu: View {
             Button("標準大小", systemImage: "textformat.size") { captionPoints = CaptionMetrics.standard }
             Divider()
             Toggle("顯示原文", systemImage: "character.ja", isOn: $showOriginal)
+            Toggle("原文在上", systemImage: "arrow.up.arrow.down", isOn: $originalFirst)
+                .disabled(!showOriginal)
+            Toggle("振假名", systemImage: "textformat.characters", isOn: $furigana)
+                .disabled(!showOriginal)
         } label: {
             Label("字級", systemImage: "textformat.size")
         }

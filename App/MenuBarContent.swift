@@ -39,7 +39,8 @@ struct MenuBarContent: View {
             .disabled(session.status.isActive)
 
             Form {
-                LanguagePickers(session: session)
+                LanguagePickers(session: session, inline: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Toggle("浮動字幕", isOn: overlay)
             }
             .formStyle(.grouped)

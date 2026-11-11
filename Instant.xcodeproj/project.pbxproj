@@ -9,9 +9,13 @@
 /* Begin PBXBuildFile section */
 		0148E686D7040C6EE871B958 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63CC483FCE2C36648F15AB40 /* SettingsView.swift */; };
 		196275BBD6DCBD70922CACF7 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 384E601EAC6EC423297CD2CA /* ContentView.swift */; };
+		1CB903FD917EF6EA10E110CA /* Furigana.swift in Sources */ = {isa = PBXBuildFile; fileRef = E77F61BF109033ADFCA3D716 /* Furigana.swift */; };
 		22A3CC44272915EEEF0D415D /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88F8C7BD56A062D128D9B9C7 /* TranscriptView.swift */; };
 		3B41FB3C886E1985534D3CD4 /* LanguageMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D3CA0877D75B65B9A930665 /* LanguageMenu.swift */; };
 		44A0D0006F92F9EB602B8D21 /* Commands.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A6CB3BA6399A51B07CF8B5 /* Commands.swift */; };
+		728AEBD14CEFD6E3EDB6A9C0 /* FurifontSansVF.woff2 in Resources */ = {isa = PBXBuildFile; fileRef = 302DFE912349D69456358860 /* FurifontSansVF.woff2 */; };
+		97B7838565B8F86414CCC690 /* Furifont-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = 583558AB020536EC44210974 /* Furifont-OFL.txt */; };
+		A9DD62A097093143D2310596 /* Furifont-DATA-LICENSE.md in Resources */ = {isa = PBXBuildFile; fileRef = 6666547456E2BA99F879259A /* Furifont-DATA-LICENSE.md */; };
 		ABB506FD175E6F7B9EB7943A /* PlaybackViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE606314CB675D017F4EB425 /* PlaybackViews.swift */; };
 		BAC86EE6F9DCAC46836133D5 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A81112560118D24B20B412C /* AssistantView.swift */; };
 		C01164A251B35C78F6E8AA29 /* OverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAB4A2D07C668E5D558A2C5A /* OverlayWindow.swift */; };
@@ -26,12 +30,15 @@
 
 /* Begin PBXFileReference section */
 		2F93348223F06DBCE261AEBC /* Instant.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Instant.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		302DFE912349D69456358860 /* FurifontSansVF.woff2 */ = {isa = PBXFileReference; path = FurifontSansVF.woff2; sourceTree = "<group>"; };
 		384E601EAC6EC423297CD2CA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3D3CA0877D75B65B9A930665 /* LanguageMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageMenu.swift; sourceTree = "<group>"; };
 		405004CE415A8F34B426EBB7 /* MenuBarContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarContent.swift; sourceTree = "<group>"; };
 		4337CB201DB2981FAA23F70F /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		47372E1B877680C90D177F09 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		583558AB020536EC44210974 /* Furifont-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Furifont-OFL.txt"; sourceTree = "<group>"; };
 		63CC483FCE2C36648F15AB40 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		6666547456E2BA99F879259A /* Furifont-DATA-LICENSE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "Furifont-DATA-LICENSE.md"; sourceTree = "<group>"; };
 		69F40C58569389C616E5EBDF /* InstantApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstantApp.swift; sourceTree = "<group>"; };
 		7A81112560118D24B20B412C /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
 		88F8C7BD56A062D128D9B9C7 /* TranscriptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptView.swift; sourceTree = "<group>"; };
@@ -39,6 +46,7 @@
 		BAB4A2D07C668E5D558A2C5A /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
 		CC6B516380E8F98BC82433B6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		CE606314CB675D017F4EB425 /* PlaybackViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackViews.swift; sourceTree = "<group>"; };
+		E77F61BF109033ADFCA3D716 /* Furigana.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Furigana.swift; sourceTree = "<group>"; };
 		F0A6CB3BA6399A51B07CF8B5 /* Commands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Commands.swift; sourceTree = "<group>"; };
 		F770DD89C73E549254120FD7 /* Library.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
 		FCEBCF4897B72E9D4ABCC834 /* InstantCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = InstantCore; path = Packages/InstantCore; sourceTree = SOURCE_ROOT; };
@@ -56,6 +64,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		25F6230932DBADAD8E03C49D /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				6666547456E2BA99F879259A /* Furifont-DATA-LICENSE.md */,
+				583558AB020536EC44210974 /* Furifont-OFL.txt */,
+				302DFE912349D69456358860 /* FurifontSansVF.woff2 */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
 		83C73009D7DCE1AA7FB3D1C9 = {
 			isa = PBXGroup;
 			children = (
@@ -89,6 +107,7 @@
 				F0A6CB3BA6399A51B07CF8B5 /* Commands.swift */,
 				384E601EAC6EC423297CD2CA /* ContentView.swift */,
 				ABD812F102E9F1051447383C /* DevAutomation.swift */,
+				E77F61BF109033ADFCA3D716 /* Furigana.swift */,
 				CC6B516380E8F98BC82433B6 /* Info.plist */,
 				69F40C58569389C616E5EBDF /* InstantApp.swift */,
 				3D3CA0877D75B65B9A930665 /* LanguageMenu.swift */,
@@ -99,6 +118,7 @@
 				CE606314CB675D017F4EB425 /* PlaybackViews.swift */,
 				63CC483FCE2C36648F15AB40 /* SettingsView.swift */,
 				88F8C7BD56A062D128D9B9C7 /* TranscriptView.swift */,
+				25F6230932DBADAD8E03C49D /* Fonts */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -111,6 +131,7 @@
 			buildConfigurationList = 0AB90EA6C2D5B2F21CA7458E /* Build configuration list for PBXNativeTarget "Instant" */;
 			buildPhases = (
 				4F7F3D29030CEA58CC14DF6D /* Sources */,
+				EBCAE03B3E212C422A0F1A68 /* Resources */,
 				BD642C1E19BAEA741C359B97 /* Frameworks */,
 			);
 			buildRules = (
@@ -162,6 +183,19 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		EBCAE03B3E212C422A0F1A68 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A9DD62A097093143D2310596 /* Furifont-DATA-LICENSE.md in Resources */,
+				97B7838565B8F86414CCC690 /* Furifont-OFL.txt in Resources */,
+				728AEBD14CEFD6E3EDB6A9C0 /* FurifontSansVF.woff2 in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		4F7F3D29030CEA58CC14DF6D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -172,6 +206,7 @@
 				44A0D0006F92F9EB602B8D21 /* Commands.swift in Sources */,
 				196275BBD6DCBD70922CACF7 /* ContentView.swift in Sources */,
 				C5409880531EE6CA383EFBE4 /* DevAutomation.swift in Sources */,
+				1CB903FD917EF6EA10E110CA /* Furigana.swift in Sources */,
 				E4CB1C989E0A300AF3968FC7 /* InstantApp.swift in Sources */,
 				3B41FB3C886E1985534D3CD4 /* LanguageMenu.swift in Sources */,
 				E1CB0CF05221456E278840F8 /* Library.swift in Sources */,

@@ -10,6 +10,8 @@ struct TranscriptView: View {
     /// Translation size in points (already scaled for Dynamic Type on iOS).
     let points: Double
     let showOriginal: Bool
+    @AppStorage(Pref.furigana) private var furiganaEnabled = true
+    @AppStorage(Pref.originalFirst) private var originalFirst = false
 
     @State private var position = ScrollPosition(edge: .top)
     /// Whether to keep the newest line in view. Turned off only by the reader scrolling away from
@@ -26,6 +28,15 @@ struct TranscriptView: View {
         let captions = session.captions
         let asked = askedAt
         let playing = playingIndex
+        let openAssistant: @MainActor () -> Void = { [ui] in
+            #if os(macOS)
+            ui.inspectorShown = true
+            #else
+            ui.assistantShown = true
+            #endif
+        }
+        let furigana = furiganaEnabled && Furigana.isAvailable
+            && Furigana.applies(toLanguageCode: session.sourceLocale.language.languageCode?.identifier)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 // Captions never change once shown, so equal rows skip re-rendering. Caption ids
@@ -33,9 +44,10 @@ struct TranscriptView: View {
                 ForEach(captions.indices, id: \.self) { index in
                     let line = captions[index]
                     CaptionRow(translation: line.translation ?? "", original: showOriginal ? line.source : nil, points: points,
-                               asked: asked[index])
+                               asked: asked[index], furigana: furigana, originalFirst: originalFirst,
+                               dimmed: index < captions.count - Self.recentCount && highlighted != index && playing != index && ui.player == nil,
+                               openAssistant: openAssistant)
                         .equatable()
-                        .opacity(index < captions.count - Self.recentCount && highlighted != index && playing != index && ui.player == nil ? 0.55 : 1)
                         .background {
                             if highlighted == index || playing == index {
                                 RoundedRectangle(cornerRadius: 10)
@@ -143,32 +155,82 @@ struct TranscriptView: View {
     }
 }
 
-/// A shown caption: translation, with the original underneath.
+/// A shown caption: translation and original, in the order the reader chose.
 struct CaptionRow: View, Equatable {
     let translation: String
     let original: String?
     let points: Double
     /// Questions asked to Claude right after this caption.
     let asked: String?
+    /// Set the original in Furifont, with readings over its kanji.
+    var furigana = false
+    /// The original large on top and the translation small below, for studying the language:
+    /// the top line is where the eye goes first.
+    var originalFirst = false
+    /// An older caption: its top line fades so the eye lands on the newest. The line below is
+    /// already secondary and stays as it is, so readings over kanji remain legible.
+    var dimmed = false
+    /// Opens the conversation with Claude, from the mark beside a caption that was asked about.
+    var openAssistant: (@MainActor () -> Void)?
+
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.translation == b.translation && a.original == b.original && a.points == b.points && a.asked == b.asked
+            && a.furigana == b.furigana && a.originalFirst == b.originalFirst && a.dimmed == b.dimmed
+            && (a.openAssistant == nil) == (b.openAssistant == nil)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(translation)
-                .font(CaptionMetrics.translationFont(points))
-            if let original {
-                Text(original)
-                    .font(CaptionMetrics.originalFont(points))
-                    .foregroundStyle(.secondary)
-            }
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            text
             if let asked {
-                Label("在這裡問了 Claude：\(asked)", systemImage: "sparkles")
-                    .font(.caption)
-                    .foregroundStyle(.tint)
-                    .lineLimit(1)
-                    .padding(.top, 2)
+                Button {
+                    openAssistant?()
+                } label: {
+                    Image(systemName: "sparkles")
+                        .font(.callout)
+                        .foregroundStyle(.tint)
+                }
+                .buttonStyle(.borderless)
+                .help("在這裡問了 Claude：\(asked)")
+                .accessibilityLabel("在這裡問了 Claude：\(asked)")
+                .disabled(openAssistant == nil)
             }
         }
+    }
+
+    private var text: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let original, originalFirst {
+                originalLine(original, primary: true)
+                translationLine(primary: false)
+            } else {
+                translationLine(primary: true)
+                if let original { originalLine(original, primary: false) }
+            }
+        }
+        // Long lines are hard to follow back to the next one; keep them to a readable measure.
+        .frame(maxWidth: CaptionMetrics.measure(points), alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func translationLine(primary: Bool) -> some View {
+        Text(translation)
+            .font(primary ? CaptionMetrics.translationFont(points) : CaptionMetrics.originalFont(points))
+            .foregroundStyle(primary ? HierarchicalShapeStyle.primary : .secondary)
+            .opacity(primary && dimmed ? 0.55 : 1)
+    }
+
+    private func originalLine(_ original: String, primary: Bool) -> some View {
+        let font = switch (furigana, primary) {
+        case (true, true): CaptionMetrics.furiganaFont(points, weight: .medium)
+        case (true, false): CaptionMetrics.furiganaFont((points * 0.75).rounded())
+        case (false, true): CaptionMetrics.originalPrimaryFont(points)
+        case (false, false): CaptionMetrics.originalFont(points)
+        }
+        return Text(original)
+            .font(font)
+            .foregroundStyle(primary ? HierarchicalShapeStyle.primary : .secondary)
+            .opacity(primary && dimmed ? 0.55 : 1)
     }
 }
 

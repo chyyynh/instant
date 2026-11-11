@@ -22,7 +22,7 @@ import ScreenCaptureKit
 /// - Mac: INSTANT_SNAPSHOT=<prefix> with INSTANT_SNAPSHOT_AT=<s,s,…> captures the main window, plus
 ///   the floating captions (-overlay), Settings (-settings) and the menu bar window (-menubar) when
 ///   open, and writes the transcript as .txt. INSTANT_INSPECTOR=1 (the Claude panel; INSTANT_ASSISTANT=1 also fills it with a canned chat under INSTANT_DEMO_UI; INSTANT_REVEAL=n then shows caption n as if its time were clicked), INSTANT_OVERLAY=1 and
-///   INSTANT_SETTINGS=1 open those first (INSTANT_SETTINGS_TAB=recognition|captions|ai picks the tab); INSTANT_MENUBAR=1 shows the menu bar window's content in a
+///   INSTANT_SETTINGS=1 open those first (INSTANT_SETTINGS_TAB=general|captions|services picks the tab); INSTANT_MENUBAR=1 shows the menu bar window's content in a
 ///   stand-in window. INSTANT_APPEARANCE=dark|light.
 /// - INSTANT_DEMO_STOP_AT=<s> stops listening that long after launch; then INSTANT_PLAY_AT=<s> plays
 ///   the recording from there and INSTANT_SAVE=1 opens the save sheet (=now saves it right away). INSTANT_LIBRARY=1 opens the
